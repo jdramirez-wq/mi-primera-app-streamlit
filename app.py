@@ -1,26 +1,24 @@
 import streamlit as st
 
-# Configuración de página principal
+# Configuración de página principal (Inicia con el menú expandido de forma nativa)
 st.set_page_config(
     page_title="Plataforma de Gestión - SODR",
     page_icon="🏢",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
-# Ocultar menús de desarrollo manteniendo el botón del menú lateral
-ocultar_elementos_css = """
+# Estilo CSS seguro: SOLO oculta la línea decorativa superior y el pie de página, 
+# dejando intactos los botones de navegación y despliegue de Streamlit.
+estilo_seguro_css = """
     <style>
-    /* Oculta el menú de tres puntos de desarrollo de la esquina derecha */
-    #MainMenu {visibility: hidden;}
-    /* Oculta el pie de página de Streamlit */
+    /* Oculta la línea roja/decorativa superior del header */
+    div[data-testid="stHeader"] {background-color: transparent;}
+    /* Oculta el pie de página de marca */
     footer {visibility: hidden;}
-    /* Oculta la barra superior decorativa */
-    header {visibility: hidden;}
-    
-    /* ¡Ojo! NO ocultamos .stAppToolbar para no perder el botón de despliegue (>) */
     </style>
 """
-st.markdown(ocultar_elementos_css, unsafe_allow_html=True)
+st.markdown(estilo_seguro_css, unsafe_allow_html=True)
 
 # Contenido de la Bienvenida
 st.title("🏢 Sistema Integrado de Trámites y Auditoría - SODR")
@@ -38,7 +36,7 @@ with col1:
         "Consolidación de Plan Indicativo (PI) con Plan de Acción (PA), "
         "generación de reportes PDF/Excel y construcción dinámica de Prompts para el BOT auditor."
     )
-    # Enrutamiento directo por nombre de archivo (Sintaxis oficial recomendada)
+    # Enrutamiento directo y limpio por nombre de archivo
     st.page_link("pages/1_Auditoria_EVAPLAN.py", label="Ir a Auditoría EVAPLAN", icon="📊", use_container_width=True)
 
 with col2:
@@ -47,5 +45,5 @@ with col2:
         "Módulo destinado a la formulación, revisión y cargue del Plan Operativo Anual de Inversiones (POAI) "
         "para la vigencia 2027. *(En desarrollo)*"
     )
-    # Enrutamiento directo por nombre de archivo (Sintaxis oficial recomendada)
+    # Enrutamiento directo y limpio por nombre de archivo
     st.page_link("pages/2_POAI_2027.py", label="Explorar Módulo POAI", icon="📝", use_container_width=True)
