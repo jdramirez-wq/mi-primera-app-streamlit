@@ -76,3 +76,106 @@ if archivo_word is not None:
             
         except Exception as e:
             st.error(f"🚨 Error al leer el archivo Word: {e}. Asegúrate de que no esté corrupto o protegido.")
+
+import streamlit as st
+import re
+import pandas as pd
+
+def consolidar_informacion_word(texto_bruto):
+    """
+    Parsea las líneas del Word extraído, unifica las tablas fragmentadas 
+    por medio del ID 'No.CV' y extrae metadatos clave.
+    """
+    lineas = texto_bruto.split("\n")
+    
+    # Diccionario intermedio para indexar por el número de fila (1, 2, 3, 4)
+    datos_consolidados = {}
+    
+    # Diccionario para almacenar metadatos generales del proyecto
+    metadatos = {
+        "dependencia": "No detectada",
+        "nombre_proyecto": "No detectado",
+        "bpin": "No detectado",
+        "codigo_pi": "No detectado"
+    }
+    
+    for linea in lineas:
+        linea_limpia = linea.strip()
+        if not linea_limpia or linea_limpia.startswith("#") or "No.CV" in linea_limpia:
+            continue
+            
+        # 1. Procesamiento de filas de indicadores (Empiezan con número | )
+        match_fila = re.match(r"^(\d+)\s*\|\s*(.*)", linea_limpia)
+        if match_fila:
+            id_cv = int(match_fila.group(1))
+            celdas = [c.strip() for c in match_fila.group(2).split("|")]
+            
+            if id_cv not in datos_consolidados:
+                datos_consolidados[id_cv] = {}
+                
+            # Identificar dinámicamente qué bloque de columnas estamos procesando según el contenido
+            if "SECRETARÍA" in celdas[0] or "Gobernación" in celdas[1]:
+                # Bloque 1: Metadatos del proyecto y objetivos
+                metadatos["dependencia"] = celdas[0]
+                metadatos["nombre_proyecto"] = celdas[1]
+                datos_consolidados[id_cv]["objetivo_especifico"] = celdas[4] if len(celdas) > 4 else ""
+                
+            elif "MGA:" in celdas[0] or "Valle competitivo" in celdas[1]:
+                # Bloque 2: Línea, Programa y Meta de Resultado
+                datos_consolidados[id_cv]["meta_resultado"] = celdas[3]
+                
+            elif any("MP14" in c for c in celdas):
+                # Bloque 3: Códigos MP y Programación Plurianual MGA
+                # Buscamos cuál celda contiene el patrón de la Meta de Producto
+                celda_mp = next((c for c in celdas if "MP14" in c), "")
+                match_mp = re.search(r"(MP\d+)", celda_mp)
+                
+                datos_consolidados[id_cv]["codigo_mp"] = match_mp.group(1) if match_mp else "No encontrado"
+                datos_consolidados[id_cv]["descripcion_mp"] = celda_mp
+                # Extraer las metas físicas anuales del proyecto (MGA) de las últimas columnas
+                if len(celdas) >= 13:
+                    datos_consolidados[id_cv]["meta_2026_mga"] = celdas[11]
+                    datos_consolidados[id_cv]["meta_2027_mga"] = celdas[12]
+                    
+            elif "DIRECTO" in celdas or "INDIRECTO" in celdas:
+                # Bloque 4: Tipo de producto e indicador MGA
+                datos_consolidados[id_cv]["producto_mga_cv"] = celdas[0]
+                datos_consolidados[id_cv]["tipo_producto"] = "DIRECTO" if "DIRECTO" in celdas else "INDIRECTO"
+
+        # 2. Extracción de códigos BPIN y PI desde el texto de la Observación General
+        if "BPIN" in linea_limpia or "PI33" in linea_limpia:
+            match_bpin = re.search(r"BPIN\s*(\d+)", linea_limpia)
+            match_pi = re.search(r"(PI\d+-\d+)", linea_limpia)
+            if match_bpin: metadatos["bpin"] = match_bpin.group(1)
+            if match_pi: metadatos["codigo_pi"] = match_pi.group(1)
+            
+    # Convertir el diccionario unificado a un DataFrame limpio de Pandas
+    df_proyecto = pd.DataFrame.from_dict(datos_consolidados, orient="index")
+    return metadatos, df_proyecto
+
+# ============================================================
+# INTEGRACIÓN EN LA INTERFAZ DE STREAMLIT
+# ============================================================
+if "texto_word_extraido" in st.session_state:
+    texto = st.session_state["texto_word_extraido"]
+    
+    # Procesar de inmediato el texto para estructurarlo
+    metadatos, df_proyecto = consolidar_informacion_word(texto)
+    
+    st.markdown("---")
+    st.subheader("📊 Datos del Proyecto unificados automáticamente")
+    
+    # Mostrar tarjetas de información general extraída
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Código del Proyecto", metadatos["codigo_pi"])
+    col2.metric("Código BPIN", metadatos["bpin"])
+    col3.metric("Indicadores a Evaluar", len(df_proyecto))
+    
+    st.write(f"**Dependencia Solicitante:** {metadatos['dependencia']}")
+    st.write(f"**Nombre del Proyecto:** {metadatos['nombre_proyecto']}")
+    
+    # Mostrar la tabla consolidated final
+    st.markdown("##### Matriz Unificada de Metas de Producto (Cadenas de Valor)")
+    st.dataframe(df_proyecto, use_container_width=True)
+    
+    st.session_state["df_proyecto_word"] = df_proyecto
