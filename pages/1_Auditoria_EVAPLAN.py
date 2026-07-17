@@ -28,6 +28,19 @@ st.title("📊 Auditoría de Seguimiento a Planes de Desarrollo Territorial")
 st.write("Sube los archivos de Excel correspondientes para procesar, consolidar y descargar los resultados en formatos Excel y PDF.")
 
 # ============================================================
+# PERSISTENCIA EN EL ESTADO DE LA SESIÓN (SESSION STATE)
+# ============================================================
+# Inicialización de variables para que no se borren al interactuar o cambiar de página
+if "excel_data" not in st.session_state:
+    st.session_state["excel_data"] = None
+if "pdf_data" not in st.session_state:
+    st.session_state["pdf_data"] = None
+if "prompt_final" not in st.session_state:
+    st.session_state["prompt_final"] = None
+if "procesado_exitoso" not in st.session_state:
+    st.session_state["procesado_exitoso"] = False
+
+# ============================================================
 # CONFIGURACIÓN DEL PERIODO DE EVALUACIÓN
 # ============================================================
 st.sidebar.header("⚙️ Configuración de Auditoría")
@@ -153,7 +166,7 @@ Nota para el GEM: El periodo de revisión corresponde a la revisión acumulada d
     elif periodo == "Revisión Acumulada y Proyectada a Cierre de Vigencia":
         bloque_config = """
 [BLOQUE DE CONFIGURACIÓN DE LA REVISIÓN]
-Nota para el GEM: El periodo de revisión corresponde al precierre de la vigencia, analizando la ejecución real frente a proyecciones de cierre.
+Nota para el GEM: El periodo de revisión pferece al precierre de la vigencia, analizando la ejecución real frente a proyecciones de cierre.
 """
     else:
         bloque_config = """
@@ -234,17 +247,18 @@ def consolidar_proyectos(grupo):
     return " | ".join(proyectos)
 
 # ============================================================
-# INTERFAZ DE USUARIO - CARGA DE ARCHIVOS
+# INTERFAZ DE USUARIO - CARGA DE ARCHIVOS CON PERSISTENCIA
 # ============================================================
 col1, col2 = st.columns(2)
 
 with col1:
     st.subheader("1. Plan Indicativo")
-    file_pi = st.file_uploader("Subir 'Informe de Plan Indicativo MP.xlsx'", type=["xlsx"])
+    # Al asignarle una key única, el componente recuerda el archivo de forma nativa en st.session_state
+    file_pi = st.file_uploader("Subir 'Informe de Plan Indicativo MP.xlsx'", type=["xlsx"], key="file_pi_uploader")
 
 with col2:
     st.subheader("2. Plan de Acción / Centralizadas")
-    file_pa = st.file_uploader("Subir 'Centralizadas.xlsx'", type=["xlsx"])
+    file_pa = st.file_uploader("Subir 'Centralizadas.xlsx'", type=["xlsx"], key="file_pa_uploader")
 
 if file_pi and file_pa:
     st.success("¡Ambos archivos cargados con éxito! Presiona el botón para procesar.")
@@ -302,7 +316,6 @@ if file_pi and file_pa:
                 df_mp["% Avance x Actividad"] = pd.to_numeric(df_mp["% Avance x Actividad"], errors="coerce")
                 df_mp["Avance_Actividad_01"] = df_mp["% Avance x Actividad"] / 100
 
-                # CORRECCIÓN AQUÍ: Cambiado 'group' por 'grupo' en la asignación presupuestal
                 df_agrupado = (
                     df_mp.groupby(["Cód. MP", "Descripción MP"], as_index=False)
                     .apply(lambda grupo: pd.Series({
@@ -325,7 +338,9 @@ if file_pi and file_pa:
                 output_excel = io.BytesIO()
                 with pd.ExcelWriter(output_excel, engine="openpyxl") as writer:
                     df_integrado.to_excel(writer, index=False, sheet_name="MP_PI_PA")
-                excel_data = output_excel.getvalue()
+                
+                # Almacenamos el resultado del procesamiento en el session_state
+                st.session_state["excel_data"] = output_excel.getvalue()
 
                 output_pdf = io.BytesIO()
                 c = canvas.Canvas(output_pdf, pagesize=LETTER)
@@ -385,39 +400,51 @@ if file_pi and file_pa:
                     c.showPage()
 
                 c.save()
-                pdf_data = output_pdf.getvalue()
-
-            st.balloons()
-            st.success("🎉 ¡Proceso finalizado con éxito!")
-
-            d_col1, d_col2 = st.columns(2)
-            with d_col1:
-                st.download_button(
-                    label="📥 Descargar Matriz Integrada (Excel)",
-                    data=excel_data,
-                    file_name="MP_PI_PA_Integrado.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-            with d_col2:
-                st.download_button(
-                    label="📥 Descargar Reporte Completo (PDF)",
-                    data=pdf_data,
-                    file_name="MP_PI_PA_Gemini_Completo.pdf",
-                    mime="application/pdf"
-                )
-
-            st.markdown("---")
-            st.subheader("🤖 Asistente de Auditoría EVAPLAN (Prompt Listo)")
-            prompt_final = generar_prompt_sistema(periodo_seleccionado)
-            
-            with st.expander("📋 Ver y Copiar Propuesta de Prompt para Gemini/ChatGPT", expanded=True):
-                st.text_area(
-                    label="Puedes copiar el texto completo usando el botón superior derecho:",
-                    value=prompt_final,
-                    height=350
-                )
+                st.session_state["pdf_data"] = output_pdf.getvalue()
+                st.session_state["prompt_final"] = generar_prompt_sistema(periodo_seleccionado)
+                st.session_state["procesado_exitoso"] = True
+                
+                st.balloons()
 
         except Exception as e:
             st.error(f"Ocurrió un error al procesar los archivos: {e}")
+            st.session_state["procesado_exitoso"] = False
+
+# ============================================================
+# RENDERIZADO PERSISTENTE DE RESULTADOS
+# ============================================================
+# Esto garantiza que los botones y prompts sigan visibles aunque el usuario cambie de página o interactúe
+if st.session_state["procesado_exitoso"]:
+    st.success("🎉 ¡Proceso finalizado con éxito!")
+
+    d_col1, d_col2 = st.columns(2)
+    with d_col1:
+        st.download_button(
+            label="📥 Descargar Matriz Integrada (Excel)",
+            data=st.session_state["excel_data"],
+            file_name="MP_PI_PA_Integrado.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    with d_col2:
+        st.download_button(
+            label="📥 Descargar Reporte Completo (PDF)",
+            data=st.session_state["pdf_data"],
+            file_name="MP_PI_PA_Gemini_Completo.pdf",
+            mime="application/pdf"
+        )
+
+    st.markdown("---")
+    st.subheader("🤖 Asistente de Auditoría EVAPLAN (Prompt Listo)")
+    
+    # Recalcula el prompt dinámicamente si el usuario cambia el periodo en la barra lateral sin volver a procesar archivos
+    prompt_dinamico = generar_prompt_sistema(periodo_seleccionado)
+    
+    with st.expander("📋 Ver y Copiar Propuesta de Prompt para Gemini/ChatGPT", expanded=True):
+        st.text_area(
+            label="Puedes copiar el texto completo usando el botón superior derecho:",
+            value=prompt_dinamico,
+            height=350
+        )
 else:
-    st.info("💡 Por favor, sube ambos archivos de Excel para habilitar la unificación de los planes.")
+    if not (file_pi and file_pa):
+        st.info("💡 Por favor, sube ambos archivos de Excel para habilitar la unificación de los planes.")
