@@ -48,7 +48,6 @@ periodo_seleccionado = st.sidebar.selectbox(
 # CONSTRUCCIÓN DINÁMICA DE PROMPTS
 # ============================================================
 def generar_prompt_sistema(periodo):
-    # Base común del perfil y contexto
     perfil_mision = """PERFIL Y MISIÓN DEL AGENTE
 
 Actúa como BOT_SODR_EVAPLAN, mi Asesor Experto en Auditoría de Seguimiento a Planes de Desarrollo Territorial. Estás adscrito a la Subdirección de Ordenamiento y Desarrollo Regional (SODR) del Departamento Administrativo de Planeación de la Gobernación del Valle del Cauca.
@@ -122,7 +121,7 @@ Dictamen Sugerido: [APROBADA] o [DEVUELTA]
 Feedback Técnico para la Entidad (Leer críticamente para enviar como observación):
 Redacta aquí un párrafo formal, institucional y respetuoso dirigido al responsable. Debe contener:
 1. Identificación clara del error o vacío técnico.
-2. Requerimiento específico para subsanar el reporte en EVAPLAN.
+2. Requerimiento específico para subsanar el reporte in EVAPLAN.
 
 Ten en cuenta: Cuida la precisión de la terminología usada, por ejemplo: Las obligaciones financieras son equivalentes a ejecución financiera, sin embargo, no son lo mismo que "Presupuesto Comprometido".
 
@@ -131,7 +130,6 @@ Si has asimilado todas estas reglas, comprendes la importancia de la temporalida
 "Entendido. Soy BOT_SODR_EVAPLAN, tu auditor técnico experto. He configurado la temporalidad y el sistema de alertas. Por favor, indícame el Periodo de Corte y carga los datos de las metas o el archivo integrado para iniciar la auditoría rigurosa."
 """
 
-    # Bloques dinámicos según selección
     if periodo == "Revisión acumulada de primer trimestre":
         bloque_config = """
 [BLOQUE DE CONFIGURACIÓN DE LA REVISIÓN]
@@ -153,19 +151,16 @@ Lógica de Temporalidad: Al ser un reporte acumulado a mitad de año (Corte a Ju
         bloque_config = """
 [BLOQUE DE CONFIGURACIÓN DE LA REVISIÓN]
 Nota para el GEM: El periodo de revisión corresponde a la revisión acumulada de Tercer Semestre (Periodo extendido multianual o ajuste de ciclo). 
-[Espacio reservado para lógica de características específicas del Tercer Semestre]
 """
     elif periodo == "Revisión Acumulada y Proyectada a Cierre de Vigencia":
         bloque_config = """
 [BLOQUE DE CONFIGURACIÓN DE LA REVISIÓN]
 Nota para el GEM: El periodo de revisión corresponde al precierre de la vigencia, analizando la ejecución real frente a proyecciones de cierre.
-[Espacio reservado para lógica de características específicas de Revisión Acumulada y Proyectada a Cierre]
 """
-    else:  # Revisión a Cierre de Vigencia
+    else:
         bloque_config = """
 [BLOQUE DE CONFIGURACIÓN DE LA REVISIÓN]
 Nota para el GEM: El periodo de revisión corresponde al Cierre Final de la Vigencia. El juicio aquí es definitivo y estricto frente a metas anuales al 100%.
-[Espacio reservado para lógica de características específicas de Cierre de Vigencia]
 """
 
     return perfil_mision + bloque_config + contexto_usuario + reglas_oro + estructura_salida
@@ -205,7 +200,6 @@ def escribir_bloque(c, texto, y, width, height, margen_x, margen_y, tamaño=10, 
     c.drawText(textobject)
     return textobject.getY() - 12
 
-# Columnas predefinidas
 columnas_base_pi = [
     'Código de Meta', 'Descripción de Meta', 'Comportamiento del Indicador',
     'Valor Proyectado', 'Resultado', '2026',
@@ -260,17 +254,14 @@ if file_pi and file_pa:
     if st.button("🚀 Procesar Datos e Integrar", type="primary"):
         try:
             with st.spinner("Procesando información presupuestal y cualitativa..."):
-                # Lectura de datos
                 df_pi = pd.read_excel(file_pi, sheet_name="Sheet1", header=1)
                 df_pi.columns = df_pi.columns.astype(str).str.strip()
 
-                # Validación PI
                 faltantes_pi = [col for col in columnas_base_pi if col not in df_pi.columns]
                 if faltantes_pi:
                     st.error(f"Faltan columnas obligatorias en el Plan Indicativo: {faltantes_pi}")
                     st.stop()
 
-                # Detección dinámica de focalización
                 columnas_focalizacion_activas = []
                 for col in columnas_focalizacion:
                     if col in df_pi.columns:
@@ -290,7 +281,6 @@ if file_pi and file_pa:
                         if tiene_datos:
                             columnas_focalizacion_activas.append(col)
 
-                # Filtrado PI
                 columnas_pi_finales = columnas_base_pi + columnas_focalizacion_activas
                 df_pi = df_pi[columnas_pi_finales].copy()
 
@@ -298,11 +288,9 @@ if file_pi and file_pa:
                     df_pi[col] = pd.to_numeric(df_pi[col], errors='coerce')
                 df_pi['Relacion_Resultado_MP_vs_2026'] = df_pi['Resultado'] / df_pi['2026']
 
-                # Lectura Plan de Acción
                 df_pa = pd.read_excel(file_pa, sheet_name="Sheet1", header=1)
                 df_pa.columns = df_pa.columns.astype(str).str.strip()
 
-                # Validación PA
                 faltantes_mp = [col for col in columnas_mp if col not in df_pa.columns]
                 if faltantes_mp:
                     st.error(f"Faltan columnas obligatorias en Centralizadas: {faltantes_mp}")
@@ -316,13 +304,13 @@ if file_pi and file_pa:
                 df_mp["% Avance x Actividad"] = pd.to_numeric(df_mp["% Avance x Actividad"], errors="coerce")
                 df_mp["Avance_Actividad_01"] = df_mp["% Avance x Actividad"] / 100
 
-                # Agrupación por MP
+                # CORRECCIÓN AQUÍ: Cambiado 'group' por 'grupo' en la asignación presupuestal
                 df_agrupado = (
                     df_mp.groupby(["Cód. MP", "Descripción MP"], as_index=False)
                     .apply(lambda grupo: pd.Series({
                         "Proyectos_Asociados": consolidar_proyectos(grupo),
                         "Suma_Ppto_Total_Obligaciones": grupo["Ppto. Total Obligaciones"].sum(),
-                        "Suma_Ppto_Definitivo": group["Ppto. Definitivo"].sum(),
+                        "Suma_Ppto_Definitivo": grupo["Ppto. Definitivo"].sum(),
                         "Promedio_Avance_Actividades_01": grupo["Avance_Actividad_01"].mean()
                     }))
                     .reset_index(drop=True)
@@ -332,14 +320,10 @@ if file_pi and file_pa:
                     df_agrupado["Suma_Ppto_Total_Obligaciones"] / df_agrupado["Suma_Ppto_Definitivo"]
                 )
 
-                # Integración final
                 df_integrado = df_pi.merge(df_agrupado, left_on="Código de Meta", right_on="Cód. MP", how="left")
                 if "Cód. MP" in df_integrado.columns:
                     df_integrado = df_integrado.drop(columns=["Cód. MP"])
 
-                # ============================================================
-                # CREACIÓN DE DESCARGAS EN MEMORIA (BytesIO)
-                # ============================================================
                 output_excel = io.BytesIO()
                 with pd.ExcelWriter(output_excel, engine="openpyxl") as writer:
                     df_integrado.to_excel(writer, index=False, sheet_name="MP_PI_PA")
@@ -406,9 +390,8 @@ if file_pi and file_pa:
                 pdf_data = output_pdf.getvalue()
 
             st.balloons()
-            st.success("🎉 ¡Proceso finalizado con éxito! Descarga tus reportes e inicializa tu prompt de auditoría aquí abajo:")
+            st.success("🎉 ¡Proceso finalizado con éxito!")
 
-            # Botones de descarga organizados en columnas
             d_col1, d_col2 = st.columns(2)
             with d_col1:
                 st.download_button(
@@ -425,27 +408,16 @@ if file_pi and file_pa:
                     mime="application/pdf"
                 )
 
-            # ============================================================
-            # SECCIÓN DEL PROMPT DE IA CON ACCIÓN DE COPIADO
-            # ============================================================
             st.markdown("---")
             st.subheader("🤖 Asistente de Auditoría EVAPLAN (Prompt Listo)")
-            st.info(f"El prompt a continuación se configuró de forma automática para la modalidad: **{periodo_seleccionado}**.")
-            
             prompt_final = generar_prompt_sistema(periodo_seleccionado)
             
-            # Usamos un expander dinámico para mantener la interfaz scannable sin saturar de texto
             with st.expander("📋 Ver y Copiar Propuesta de Prompt para Gemini/ChatGPT", expanded=True):
                 st.text_area(
-                    label="Puedes copiar el texto completo usando el botón superior derecho de este cuadro de texto:",
+                    label="Puedes copiar el texto completo usando el botón superior derecho:",
                     value=prompt_final,
                     height=350
                 )
-
-            # Vista previa opcional de la tabla
-            st.markdown("---")
-            st.subheader("👀 Vista previa de los datos unificados (Primeras 5 filas)")
-            st.dataframe(df_integrado.head())
 
         except Exception as e:
             st.error(f"Ocurrió un error al procesar los archivos: {e}")
