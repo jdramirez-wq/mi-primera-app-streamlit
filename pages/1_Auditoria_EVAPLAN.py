@@ -13,18 +13,16 @@ st.set_page_config(
     layout="wide"
 )
 
-# Ocultar menús y opciones de desarrollo visuales
-st.markdown(
-    """
+# Ocultar menús de desarrollo de forma segura en la página de auditoría
+estilo_seguro_p1_css = """
     <style>
-    #MainMenu {visibility: hidden;}
+    /* Oculta la línea roja decorativa del header */
+    div[data-testid="stHeader"] {background-color: transparent;}
+    /* Oculta el pie de página */
     footer {visibility: hidden;}
-    header {visibility: hidden;}
-    .stAppToolbar {visibility: hidden;}
     </style>
-    """,
-    unsafe_allow_html=True
-)
+"""
+st.markdown(estilo_seguro_p1_css, unsafe_allow_html=True)
 
 st.title("📊 Auditoría de Seguimiento a Planes de Desarrollo Territorial")
 st.write("Sube los archivos de Excel correspondientes para procesar, consolidar y descargar los resultados en formatos Excel y PDF.")
