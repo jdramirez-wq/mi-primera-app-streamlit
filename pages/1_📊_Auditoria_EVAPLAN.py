@@ -6,18 +6,31 @@ from reportlab.pdfgen import canvas
 from textwrap import wrap
 import io
 
-# Configuración de página de Streamlit
+# Configuración de página de Streamlit para la Subpágina
 st.set_page_config(
-    page_title="Consolidador PI + PA + PDF",
+    page_title="Auditoría EVAPLAN",
     page_icon="📊",
     layout="wide"
 )
 
-st.title("📊 Consolidación Plan Indicativo (PI) + Plan de Acción (PA)")
+# Ocultar menús y opciones de desarrollo visuales
+st.markdown(
+    """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .stAppToolbar {visibility: hidden;}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+st.title("📊 Auditoría de Seguimiento a Planes de Desarrollo Territorial")
 st.write("Sube los archivos de Excel correspondientes para procesar, consolidar y descargar los resultados en formatos Excel y PDF.")
 
 # ============================================================
-# CONFIGURACIÓN DEL PERIODO DE EVALUACIÓN (NUEVO)
+# CONFIGURACIÓN DEL PERIODO DE EVALUACIÓN
 # ============================================================
 st.sidebar.header("⚙️ Configuración de Auditoría")
 periodo_seleccionado = st.sidebar.selectbox(
@@ -32,7 +45,7 @@ periodo_seleccionado = st.sidebar.selectbox(
 )
 
 # ============================================================
-# CONSTRUCCIÓN DINÁMICA DE PROMPTS (NUEVO)
+# CONSTRUCCIÓN DINÁMICA DE PROMPTS
 # ============================================================
 def generar_prompt_sistema(periodo):
     # Base común del perfil y contexto
@@ -309,7 +322,7 @@ if file_pi and file_pa:
                     .apply(lambda grupo: pd.Series({
                         "Proyectos_Asociados": consolidar_proyectos(grupo),
                         "Suma_Ppto_Total_Obligaciones": grupo["Ppto. Total Obligaciones"].sum(),
-                        "Suma_Ppto_Definitivo": grupo["Ppto. Definitivo"].sum(),
+                        "Suma_Ppto_Definitivo": group["Ppto. Definitivo"].sum(),
                         "Promedio_Avance_Actividades_01": grupo["Avance_Actividad_01"].mean()
                     }))
                     .reset_index(drop=True)
@@ -413,7 +426,7 @@ if file_pi and file_pa:
                 )
 
             # ============================================================
-            # SECCIÓN DEL PROMPT DE IA CON ACCIÓN DE COPIADO (NUEVO)
+            # SECCIÓN DEL PROMPT DE IA CON ACCIÓN DE COPIADO
             # ============================================================
             st.markdown("---")
             st.subheader("🤖 Asistente de Auditoría EVAPLAN (Prompt Listo)")
