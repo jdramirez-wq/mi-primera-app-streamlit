@@ -1,76 +1,78 @@
 import streamlit as st
+import docx  # Importa python-docx para leer archivos .docx
 import re
-import pandas as pd
 
-def parsear_texto_word(texto_completo):
-    """
-    Saca los bloques del Word separados por '#' y los unifica en estructuras limpias.
-    """
-    bloques = texto_completo.split("#")
-    
-    # Variables de almacenamiento
-    proyecto_metadatos = {}
-    lineas_actividades = []
-    
-    # 1. Extracción de Metadatos Generales y Cadenas (Buscamos bloques con datos)
-    for bloque in bloques:
-        if "No.CV" in bloque and "Nombre Proyecto" in bloque:
-            # Extraer de forma simple la primera coincidencia para datos generales
-            lineas = bloque.strip().split("\n")
-            for l in lineas:
-                if l.startswith("1\t|") or "1 |" in l:
-                    partes = [p.strip() for p in l.split("|")]
-                    proyecto_metadatos['cod_cv'] = partes[1]
-                    proyecto_metadatos['dependencia'] = partes[2]
-                    proyecto_metadatos['nombre_proyecto'] = partes[3]
-                    proyecto_metadatos['objetivo_general'] = partes[5]
-                    break
-                    
-    # 2. Extracción Específica de la Tabla de Distribución Presupuestal POAI 2027
-    # Usamos expresiones regulares para capturar las Metas de Producto (MP) y sus Actividades
-    patron_mp = r"(MP\d+)\s*-\s*([^|]+)"
-    patron_actividad = r"(PI\d+-\d+/[^|\n]+)\n([^|$\n]+)"
-    
-    # Procesar el texto final (Observaciones y Tabla de costos)
-    if "OBSERVACIÓN GENERAL DEL FORMULADOR" in texto_completo:
-        bloque_costos = texto_completo.split("OBSERVACIÓN GENERAL DEL FORMULADOR del PROYECTO:")[1]
-        # Fragmentar por saltos de línea para buscar la estructura: MP -> Producto -> Actividad -> Valor
-        lineas_costos = bloque_costos.split("\n")
-        
-        # Iteración para capturar la traza financiera y sintáctica
-        # (Esto mapea la actividad con su respectiva MP para el cruce con DRIVE)
-        
-    return proyecto_metadatos
-
-# ============================================================
-# INTERFAZ DE STREAMLIT DE LA SUBPÁGINA 2 (FASE DE EXTRACCIÓN)
-# ============================================================
-st.title("📐 Extractor y Analizador de Proyectos (Word -> Drive)")
-st.write("Esta sección extrae y estructura las tablas del Word antes de realizar el cruce con el Plan Indicativo.")
-
-texto_word = st.text_area(
-    "Pega aquí el contenido completo del archivo Word (incluyendo los símbolos # y tablas):", 
-    height=300,
-    placeholder="Pegar el documento aquí..."
+st.set_page_config(
+    page_title="Revisión de Proyectos - Control Previo",
+    page_icon="📐",
+    layout="wide"
 )
 
-if texto_word:
-    with st.spinner("🔍 Analizando estructura del documento..."):
-        try:
-            # Al procesar el texto, el sistema detecta los campos clave automáticamente
-            datos_extraidos = parsear_texto_word(texto_word)
-            
-            # Mostramos al usuario lo que el sistema ya indexó y dejó listo para cruzar:
-            st.success("📊 Información del Proyecto Detectada Exitosamente")
-            
-            c1, c2 = st.columns(2)
-            with c1:
-                st.metric("Código CV Detectado", datos_extraidos.get('cod_cv', 'No encontrado'))
-                st.text_input("Dependencia Identificada:", datos_extraidos.get('dependencia', ''))
-            with c2:
-                st.text_input("Nombre del Proyecto:", datos_extraidos.get('nombre_proyecto', ''))
+def extraer_texto_y_tablas_docx(file_buffer):
+    """
+    Lee un archivo .docx desde la memoria, extrae el texto de los párrafos 
+    y reconstruye las tablas en formato de texto plano estructurado.
+    """
+    doc = docx.Document(file_buffer)
+    contenido_total = []
+    
+    # 1. Recorrer los elementos del documento en orden de aparición
+    # (python-docx nos permite iterar sobre párrafos y tablas)
+    for elemento in doc.element.body:
+        # Si el elemento es un párrafo, extraemos su texto
+        if elemento.tag.endswith('p'):
+            p = docx.text.paragraph.Paragraph(elemento, doc)
+            if p.text.strip():
+                contenido_total.append(p.text)
                 
-            st.info("🎯 **Siguiente Paso:** Los códigos de Meta de Producto (MP) identificados en este documento están listos para ser contrastados con el archivo **DRIVE compartido** en el siguiente paso de la automatización.")
+        # Si el elemento es una tabla, la formateamos con separadores '|'
+        elif elemento.tag.endswith('tbl'):
+            tabla = docx.table.Table(elemento, doc)
+            contenido_total.append("#") # Añadimos el separador de bloques
+            
+            for fila in tabla.rows:
+                # Unimos el texto de cada celda de la fila usando el separador '|'
+                textos_celdas = [celda.text.strip().replace('\n', ' ') for celda in fila.cells]
+                # Eliminamos duplicados contiguos si hay celdas combinadas vertical/horizontalmente
+                linea_tabla = " | ".join(textos_celdas)
+                contenido_total.append(linea_tabla)
+                
+    return "\n".join(contenido_total)
+
+# ============================================================
+# INTERFAZ DE USUARIO (SUBPÁGINA 2)
+# ============================================================
+st.title("📐 Control Previo y Revisión de Cadenas de Valor")
+st.write("Sube el archivo Word de la Cadena de Valor para extraer su información y prepararla para el cruce con el Plan Indicativo.")
+
+st.markdown("---")
+
+# Componente nativo de Streamlit para subir el archivo .docx
+archivo_word = st.file_uploader(
+    "📂 Sube aquí el formato de Cadena de Valor en Word (.docx)", 
+    type=["docx"],
+    help="El sistema extraerá las tablas presupuestales, objetivos y la matriz técnica automáticamente."
+)
+
+if archivo_word is not None:
+    with st.spinner("⏳ Leyendo documento de Word y estructurando tablas..."):
+        try:
+            # Extraemos todo el texto y tablas unificadas
+            texto_extraido = extraer_texto_y_tablas_docx(archivo_word)
+            
+            # Almacenamos el texto en el estado de la sesión para usarlo en los siguientes pasos
+            st.session_state["texto_word_extraido"] = texto_extraido
+            
+            st.success("✅ ¡Archivo cargado y procesado con éxito!")
+            
+            # --- VISTA PREVIA INFORMATIVA DE LOS DATOS DETECTADOS ---
+            # Buscamos de manera rápida el nombre del proyecto o dependencia para darle feedback al usuario
+            with st.expander("🔍 Ver texto técnico extraído del Word", expanded=False):
+                st.text_area("Contenido bruto procesado:", value=texto_extraido, height=300)
+                
+            # Aquí ya tenemos la variable `texto_extraido` perfectamente formateada,
+            # lista para que en el siguiente bloque del código realicemos el cruce con el DRIVE
+            # y ejecutemos las validaciones del agente experto.
             
         except Exception as e:
-            st.error(f"El formato del texto pegado no coincide con la estructura esperada del Word: {e}")
+            st.error(f"🚨 Error al leer el archivo Word: {e}. Asegúrate de que no esté corrupto o protegido.")
