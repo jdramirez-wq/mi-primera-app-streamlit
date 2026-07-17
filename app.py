@@ -7,13 +7,17 @@ st.set_page_config(
     layout="wide"
 )
 
-# Ocultar menús de desarrollo
+# Ocultar menús de desarrollo manteniendo el botón del menú lateral
 ocultar_elementos_css = """
     <style>
+    /* Oculta el menú de tres puntos de desarrollo de la esquina derecha */
     #MainMenu {visibility: hidden;}
+    /* Oculta el pie de página de Streamlit */
     footer {visibility: hidden;}
+    /* Oculta la barra superior decorativa */
     header {visibility: hidden;}
-    .stAppToolbar {visibility: hidden;}
+    
+    /* ¡Ojo! NO ocultamos .stAppToolbar para no perder el botón de despliegue (>) */
     </style>
 """
 st.markdown(ocultar_elementos_css, unsafe_allow_html=True)
