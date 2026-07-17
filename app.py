@@ -34,7 +34,7 @@ with col1:
         "Consolidación de Plan Indicativo (PI) con Plan de Acción (PA), "
         "generación de reportes PDF/Excel y construcción dinámica de Prompts para el BOT auditor."
     )
-    # Ruta limpia sin emojis
+    # Ruta limpia sin emojis (el icono se maneja exclusivamente por el parámetro icon)
     st.page_link("pages/1_Auditoria_EVAPLAN.py", label="Ir a Auditoría EVAPLAN", icon="📊", use_container_width=True)
 
 with col2:
