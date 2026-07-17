@@ -423,28 +423,32 @@ if st.session_state["procesado_exitoso"]:
             label="📥 Descargar Matriz Integrada (Excel)",
             data=st.session_state["excel_data"],
             file_name="MP_PI_PA_Integrado.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
         )
     with d_col2:
         st.download_button(
             label="📥 Descargar Reporte Completo (PDF)",
             data=st.session_state["pdf_data"],
             file_name="MP_PI_PA_Gemini_Completo.pdf",
-            mime="application/pdf"
+            mime="application/pdf",
+            use_container_width=True
         )
 
     st.markdown("---")
     st.subheader("🤖 Asistente de Auditoría EVAPLAN (Prompt Listo)")
     
-    # Recalcula el prompt dinámicamente si el usuario cambia el periodo en la barra lateral sin volver a procesar archivos
+    # Recalcula el prompt dinámicamente si el usuario cambia el periodo en la barra lateral
     prompt_dinamico = generar_prompt_sistema(periodo_seleccionado)
     
     with st.expander("📋 Ver y Copiar Propuesta de Prompt para Gemini/ChatGPT", expanded=True):
-        st.text_area(
-            label="Puedes copiar el texto completo usando el botón superior derecho:",
-            value=prompt_dinamico,
-            height=350
+        st.markdown(
+            "💡 **Tip de productividad:** Pasa el mouse sobre el bloque de texto gris de abajo "
+            "y haz clic en el botón de **Copiar** (icono de dos hojas) que aparece en la esquina superior derecha."
         )
+        # Usamos st.code ya que Streamlit le añade automáticamente un botón nativo y gigante de "Copiar al portapapeles"
+        st.code(prompt_dinamico, language="markdown", wrap_lines=True)
+
 else:
     if not (file_pi and file_pa):
         st.info("💡 Por favor, sube ambos archivos de Excel para habilitar la unificación de los planes.")
