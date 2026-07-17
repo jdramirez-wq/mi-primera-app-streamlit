@@ -441,13 +441,23 @@ if st.session_state["procesado_exitoso"]:
     # Recalcula el prompt dinámicamente si el usuario cambia el periodo en la barra lateral
     prompt_dinamico = generar_prompt_sistema(periodo_seleccionado)
     
-    with st.expander("📋 Ver y Copiar Propuesta de Prompt para Gemini/ChatGPT", expanded=True):
+    with st.expander("📋 Ver y Copiar Propuesta de Prompt para Gemini / ChatGPT", expanded=True):
         st.markdown(
-            "💡 **Tip de productividad:** Pasa el mouse sobre el bloque de texto gris de abajo "
-            "y haz clic en el botón de **Copiar** (icono de dos hojas) que aparece en la esquina superior derecha."
+            "💡 **Paso 1:** Pasa el mouse sobre el bloque de texto gris de abajo "
+            "y haz clic en el botón de **Copiar** (icono de dos hojas) en la esquina superior derecha."
         )
-        # Usamos st.code ya que Streamlit le añade automáticamente un botón nativo y gigante de "Copiar al portapapeles"
+        # Bloque de copiado rápido
         st.code(prompt_dinamico, language="markdown", wrap_lines=True)
+        
+        st.markdown("---")
+        st.markdown("🚀 **Paso 2:** Ve directo a la Inteligencia Artificial a pegar tu prompt:")
+        
+        # Columnas para botones de acceso rápido
+        col_gem, col_gpt = st.columns(2)
+        with col_gem:
+            st.link_button("🌐 Ir a Google Gemini Web", "https://gemini.google.com/", use_container_width=True, type="primary")
+        with col_gpt:
+            st.link_button("💬 Ir a ChatGPT (Alternativo)", "https://chatgpt.com/", use_container_width=True)
 
 else:
     if not (file_pi and file_pa):
