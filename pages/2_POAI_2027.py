@@ -238,25 +238,26 @@ if archivo_word is not None:
             st.error(f"🚨 Error en el procesamiento del documento: {e}")
 
 # ============================================================
-# COMPONENTE DE CRUCE CON PLAN INDICATIVO (PESTANA "MP")
+# COMPONENTE DE CRUCE CON PLAN INDICATIVO (MÉTODO EXCEL - PESTAÑA MP)
 # ============================================================
 
 st.markdown("---")
 st.subheader("🔍 Auditoría de Coherencia: Word vs. Plan Indicativo (Drive)")
 
-# MODIFICACIÓN CRÍTICA: Añadimos &sheet=MP para forzar la descarga de la pestaña correcta
-URL_DRIVE = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtKgIV3ch3cQ-JbcAOTjQD8ss/export?format=csv&sheet=MP"
+# CAMBIO CRÍTICO: Exportamos como formato Excel completo (.xlsx) en lugar de CSV
+URL_DRIVE_EXCEL = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtKgIV3ch3cQ-JbcAOTjQD8ss/export?format=xlsx"
 
 if "df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty:
     df_word = st.session_state["df_indicadores_estandar"]
     
     if st.button("🚀 Ejecutar Cruce de Indicadores contra Drive"):
-        with st.spinner("⏳ Conectando a la pestaña MP del Drive y procesando fila 2..."):
+        with st.spinner("⏳ Descargando libro de Excel y extrayendo la pestaña 'MP'..."):
             try:
-                # 1. Leer el archivo omitiendo la primera fila (encabezados en fila 2)
-                df_drive = pd.read_csv(URL_DRIVE, header=1)
+                # 1. Leer el archivo Excel especificando la pestaña exacta "MP" y que los encabezados están en la fila 2 (header=1)
+                # Requiere la librería openpyxl instalada
+                df_drive = pd.read_excel(URL_DRIVE_EXCEL, sheet_name="MP", header=1, engine="openpyxl")
                 
-                # Mapeo flexible sobre la pestaña MP
+                # Mapeo flexible sobre las columnas de la pestaña MP
                 columnas_reales = list(df_drive.columns)
                 
                 col_codigo_mp = None
@@ -335,16 +336,17 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     # Resumen técnico
                     errores = df_cruce["Resultado Validación"].str.contains("🔴").sum()
                     if errores > 0:
-                        st.error(f"⚠️ Se detectaron {errores} alertas en el cruce con la pestaña MP. Revisa las diferencias.")
+                        st.error(f"⚠️ Se detectaron {errores} alertas en el cruce técnico. Revisa las diferencias en las descripciones.")
                     else:
-                        st.success("🎉 ¡Excelente! Todos los indicadores coinciden plenamente con la pestaña MP del Plan Indicativo.")
+                        st.success("🎉 ¡Excelente! Todos los indicadores coinciden plenamente con la pestaña MP de tu Plan Indicativo.")
                         
                 else:
-                    st.error("🚨 Mapeo fallido en la pestaña MP.")
-                    st.info(f"**Columnas leídas en la fila 2 de la pestaña MP:** {columnas_reales}")
-                    st.warning("Verifica si las columnas de la fila 2 en la pestaña 'MP' mantienen las palabras clave buscadas.")
+                    st.error("🚨 Mapeo de columnas fallido dentro de la pestaña MP.")
+                    st.info(f"**Columnas leídas en la fila 2 de la pestaña 'MP':** {columnas_reales}")
+                    st.warning("Verifica si los nombres de los encabezados reales de la fila 2 sufrieron modificaciones drásticas.")
                     
             except Exception as e:
-                st.error(f"❌ Error al procesar la pestaña MP: {e}")
+                st.error(f"❌ Error al procesar la pestaña MP en formato Excel: {e}")
+                st.info("Asegúrate de que el archivo de Google Drive tenga los permisos configurados como 'Cualquier persona con el enlace puede leer'.")
 else:
     st.info("💡 Por favor, primero carga un archivo Word en la sección superior para habilitar el botón de cruce.")
