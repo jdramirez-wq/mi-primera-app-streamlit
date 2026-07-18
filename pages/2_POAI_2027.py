@@ -238,25 +238,25 @@ if archivo_word is not None:
             st.error(f"🚨 Error en el procesamiento del documento: {e}")
 
 # ============================================================
-# COMPONENTE DE CRUCE ENFOCADO EXCLUSIVAMENTE EN EL CÓDIGO
+# COMPONENTE DE AUDITORÍA: COMPARACIÓN ESTRICTA DE CÓDIGOS NUMÉRICOS
 # ============================================================
 
 st.markdown("---")
 st.subheader("🔍 Auditoría de Coherencia: Word vs. Plan Indicativo (Drive)")
 
-# Exportamos como formato Excel completo (.xlsx) para acceder a las pestañas por su nombre
+# Exportamos en formato Excel (.xlsx) para garantizar la lectura limpia de la pestaña "MP"
 URL_DRIVE_EXCEL = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtKgIV3ch3cQ-JbcAOTjQD8ss/export?format=xlsx"
 
 if "df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty:
     df_word = st.session_state["df_indicadores_estandar"].copy()
     
     if st.button("🚀 Ejecutar Cruce de Indicadores contra Drive"):
-        with st.spinner("⏳ Descargando Plan Indicativo y comparando códigos numéricos..."):
+        with st.spinner("⏳ Analizando correspondencia de códigos en la pestaña MP..."):
             try:
-                # 1. Leer el archivo Excel especificando la pestaña exacta "MP" y encabezados en la fila 2 (header=1)
+                # 1. Leer la pestaña "MP" omitiendo la primera fila de control (encabezados en fila 2 -> header=1)
                 df_drive = pd.read_excel(URL_DRIVE_EXCEL, sheet_name="MP", header=1, engine="openpyxl")
                 
-                # Mapeo flexible sobre las columnas de la pestaña MP
+                # Mapeo flexible de columnas para prevenir cambios sutiles de nombres en el Drive
                 columnas_reales = list(df_drive.columns)
                 col_codigo_mp = None
                 col_indicador = None
@@ -269,62 +269,78 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         col_indicador = col
                 
                 if col_codigo_mp and col_indicador:
-                    # Renombrar para estandarizar
+                    # Renombrar para estandarizar el procesamiento interno
                     df_drive = df_drive.rename(columns={col_codigo_mp: "Código MP_Drive_Raw", col_indicador: "Indicador de producto"})
                     
-                    # Función para extraer solo los números iniciales del código
+                    # --- FUNCIÓN DE EXTRACCIÓN NUMÉRICA PURA ---
                     def extraer_solo_numero(valor):
                         if pd.isna(valor):
                             return ""
+                        # Captura el primer bloque continuo de dígitos numéricos
                         match = re.search(r'\d+', str(valor))
                         return match.group(0) if match else str(valor).strip()
                     
-                    # Limpieza y extracción numérica en el Drive
-                    df_drive["Código MP_Clean"] = df_drive["Código MP_Drive_Raw"].apply(extraer_solo_numero)
-                    df_drive_clean = df_drive[["Código MP_Clean", "Indicador de producto"]].dropna(subset=["Código MP_Clean"])
-                    df_drive_clean = df_drive_clean[df_drive_clean["Código MP_Clean"] != ""]
-                    df_drive_clean = df_drive_clean.drop_duplicates(subset=["Código MP_Clean"])
+                    # Generamos las llaves numéricas limpias en ambos extremos
+                    df_drive["Código MP_Clean_Drive"] = df_drive["Código MP_Drive_Raw"].apply(extraer_solo_numero)
+                    df_word["Código MP_Clean_Word"] = df_word["Código MP"].apply(extraer_solo_numero)
                     
-                    # Limpieza y extracción numérica en el Word
-                    df_word["Código MP_Clean"] = df_word["Código MP"].apply(extraer_solo_numero)
+                    # Limpieza preventiva del DataFrame de origen en Drive
+                    df_drive_clean = df_drive[["Código MP_Clean_Drive", "Código MP_Drive_Raw", "Indicador de producto"]].dropna(subset=["Código MP_Clean_Drive"])
+                    df_drive_clean = df_drive_clean[df_drive_clean["Código MP_Clean_Drive"] != ""]
+                    df_drive_clean = df_drive_clean.drop_duplicates(subset=["Código MP_Clean_Drive"])
                     
-                    # 2. Realizar el cruce usando la llave numérica limpia
+                    # 2. Ejecutar el cruce (merge) usando el número del Word como base
                     df_cruce = pd.merge(
                         df_word, 
                         df_drive_clean, 
-                        on="Código MP_Clean", 
+                        left_on="Código MP_Clean_Word",
+                        right_on="Código MP_Clean_Drive", 
                         how="left"
                     )
                     
-                    # 3. NUEVA LÓGICA DE VALIDACIÓN: ENFOCADA SOLO EN EL CÓDIGO
+                    # 3. LÓGICA DE VALIDACIÓN: CORRESPONDENCIA DE CÓDIGO A CÓDIGO
                     def validar_coherencia(row):
-                        # Si tras el merge, la columna traída del Drive está vacía o es NaN, significa que el código numérico no existía allá
-                        if not row.get("Indicador de producto") or pd.isna(row.get("Indicador de producto")) or str(row.get("Indicador de producto")).strip().lower() == "nan":
+                        num_word = str(row.get("Código MP_Clean_Word", "")).strip()
+                        num_drive = str(row.get("Código MP_Clean_Drive", "")).strip()
+                        
+                        # Si no se encontró ninguna fila equivalente en el Drive
+                        if not row.get("Código MP_Clean_Drive") or pd.isna(row.get("Código MP_Clean_Drive")) or num_drive == "nan" or num_drive == "":
                             return "🔴 Código no encontrado en Drive"
+                        
+                        # Comparamos estrictamente el identificador numérico de las MP
+                        elif num_word == num_drive:
+                            return "🟢 Corresponde a la MP"
                         else:
-                            # Si encontró el registro por código, lo damos por válido ignorando diferencias de texto
-                            return "🟢 Código Válido (Existe en Drive)"
+                            # Captura escenarios donde el cruce por aproximación o residuo difiera matemáticamente
+                            return "🔴 Código no corresponde a la MP"
                     
                     df_cruce["Resultado Validación"] = df_cruce.apply(validar_coherencia, axis=1)
                     
-                    # Formato visual de alertas en Streamlit
+                    # Formato visual tipo semáforo para el cargue en Streamlit
                     def color_semaforo(val):
                         if "🟢" in str(val):
                             return "background-color: #d4edda; color: #155724; font-weight: bold;"
                         else:
                             return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
                     
-                    # Columnas organizadas para el reporte final
+                    # Estructura del reporte final que se renderiza en la interfaz
                     columnas_resultado = [
-                        "Código MP",  # Código original cargado del Word
+                        "Código MP",                       # Código original del archivo Word
+                        "Código MP_Drive_Raw",             # Código original extraído de la pestaña MP
                         "No.CV", 
-                        "Indicador de Producto CV - MGA", # Descripción del Word
-                        "Indicador de producto", # Descripción del Drive
+                        "Indicador de Producto CV - MGA",  # Descripción en Word
+                        "Indicador de producto",           # Descripción en Drive
                         "Resultado Validación"
                     ]
                     
                     cols_render = [c for c in columnas_resultado if c in df_cruce.columns]
                     df_final_render = df_cruce[cols_render]
+                    
+                    # Renombrado cosmético de columnas para el usuario de control previo
+                    df_final_render = df_final_render.rename(columns={
+                        "Código MP": "Código en Word",
+                        "Código MP_Drive_Raw": "Código en Drive"
+                    })
                     
                     st.markdown("##### 📈 Reporte de Alertas de Control Previo (Pestaña MP)")
                     st.dataframe(
@@ -332,19 +348,19 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         use_container_width=True
                     )
                     
-                    # Resumen técnico en pantalla
+                    # Alertas consolidadas en la base del módulo
                     errores = df_cruce["Resultado Validación"].str.contains("🔴").sum()
                     if errores > 0:
-                        st.error(f"⚠️ Se detectaron {errores} alertas. Hay códigos numéricos del Word que no figuran en el Plan Indicativo de Drive.")
+                        st.error(f"⚠️ Se detectaron {errores} observaciones en la asignación de metas. Verifica los códigos resaltados.")
                     else:
-                        st.success("🎉 ¡Excelente! Todos los códigos numéricos analizados existen y están correctamente registrados en el Plan Indicativo.")
+                        st.success("🎉 ¡Excelente! Todos los códigos evaluados corresponden matemáticamente a las Metas de Producto del Plan Indicativo.")
                         
                 else:
                     st.error("🚨 Mapeo de columnas fallido dentro de la pestaña MP.")
                     st.info(f"**Columnas leídas en la fila 2 de la pestaña 'MP':** {columnas_reales}")
                     
             except Exception as e:
-                st.error(f"❌ Error al procesar la pestaña MP en formato Excel: {e}")
+                st.error(f"❌ Error al procesar la verificación de correspondencia: {e}")
                 
 else:
     st.info("💡 Por favor, primero carga un archivo Word en la sección superior para habilitar el botón de cruce.")
