@@ -238,7 +238,7 @@ if archivo_word is not None:
             st.error(f"🚨 Error en el procesamiento del documento: {e}")
 
 # ============================================================
-# COMPONENTE DE AUDITORÍA: COMPARACIÓN ESTRICTA DE CÓDIGOS NUMÉRICOS
+# COMPONENTE DE CRUCE CON VALIDACIÓN ESTRICTA ANTI-FALSOS POSITIVOS
 # ============================================================
 
 st.markdown("---")
@@ -251,7 +251,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
     df_word = st.session_state["df_indicadores_estandar"].copy()
     
     if st.button("🚀 Ejecutar Cruce de Indicadores contra Drive"):
-        with st.spinner("⏳ Analizando correspondencia de códigos en la pestaña MP..."):
+        with st.spinner("⏳ Analizando correspondencia exacta de códigos en la pestaña MP..."):
             try:
                 # 1. Leer la pestaña "MP" omitiendo la primera fila de control (encabezados en fila 2 -> header=1)
                 df_drive = pd.read_excel(URL_DRIVE_EXCEL, sheet_name="MP", header=1, engine="openpyxl")
@@ -274,18 +274,19 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     
                     # --- FUNCIÓN DE EXTRACCIÓN NUMÉRICA PURA ---
                     def extraer_solo_numero(valor):
-                        if pd.isna(valor):
+                        if pd.isna(valor) or str(valor).strip().lower() == "nan":
                             return ""
                         # Captura el primer bloque continuo de dígitos numéricos
                         match = re.search(r'\d+', str(valor))
-                        return match.group(0) if match else str(valor).strip()
+                        return match.group(0) if match else ""
                     
-                    # Generamos las llaves numéricas limpias en ambos extremos
-                    df_drive["Código MP_Clean_Drive"] = df_drive["Código MP_Drive_Raw"].apply(extraer_solo_numero)
-                    df_word["Código MP_Clean_Word"] = df_word["Código MP"].apply(extraer_solo_numero)
+                    # Generamos las llaves numéricas limpias y estrictas en ambos extremos
+                    df_word["Código MP_Clean_Word"] = df_word["Código MP"].apply(extraer_solo_numero).str.strip()
+                    df_drive["Código MP_Clean_Drive"] = df_drive["Código MP_Drive_Raw"].apply(extraer_solo_numero).str.strip()
                     
-                    # Limpieza preventiva del DataFrame de origen en Drive
-                    df_drive_clean = df_drive[["Código MP_Clean_Drive", "Código MP_Drive_Raw", "Indicador de producto"]].dropna(subset=["Código MP_Clean_Drive"])
+                    # Limpieza radical del DataFrame de Drive para eliminar filas vacías o códigos inexistentes
+                    df_drive_clean = df_drive[["Código MP_Clean_Drive", "Código MP_Drive_Raw", "Indicador de producto"]].copy()
+                    df_drive_clean = df_drive_clean.dropna(subset=["Código MP_Clean_Drive"])
                     df_drive_clean = df_drive_clean[df_drive_clean["Código MP_Clean_Drive"] != ""]
                     df_drive_clean = df_drive_clean.drop_duplicates(subset=["Código MP_Clean_Drive"])
                     
@@ -298,21 +299,22 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         how="left"
                     )
                     
-                    # 3. LÓGICA DE VALIDACIÓN: CORRESPONDENCIA DE CÓDIGO A CÓDIGO
+                    # 3. LÓGICA DE VALIDACIÓN ULTRA-ESTRICTA ANTI-FALSOS POSITIVOS
                     def validar_coherencia(row):
                         num_word = str(row.get("Código MP_Clean_Word", "")).strip()
                         num_drive = str(row.get("Código MP_Clean_Drive", "")).strip()
                         
-                        # Si no se encontró ninguna fila equivalente en el Drive
-                        if not row.get("Código MP_Clean_Drive") or pd.isna(row.get("Código MP_Clean_Drive")) or num_drive == "nan" or num_drive == "":
+                        # Control 1: Si después del merge, la celda está vacía, no se encontró el código
+                        if pd.isna(row.get("Código MP_Clean_Drive")) or num_drive == "nan" or num_drive == "":
                             return "🔴 Código no encontrado en Drive"
                         
-                        # Comparamos estrictamente el identificador numérico de las MP
-                        elif num_word == num_drive:
+                        # Control 2: Comparación matemática explícita e inequívoca de ambos códigos
+                        elif num_word == num_drive and num_word != "":
                             return "🟢 Corresponde a la MP"
+                        
+                        # Control 3: Si por alguna razón cruzó pero los números son diferentes (Ej: 230200700 vs 230208600)
                         else:
-                            # Captura escenarios donde el cruce por aproximación o residuo difiera matemáticamente
-                            return "🔴 Código no corresponde a la MP"
+                            return "🔴 El código cruzado NO corresponde a la MP"
                     
                     df_cruce["Resultado Validación"] = df_cruce.apply(validar_coherencia, axis=1)
                     
@@ -334,7 +336,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     ]
                     
                     cols_render = [c for c in columnas_resultado if c in df_cruce.columns]
-                    df_final_render = df_cruce[cols_render]
+                    df_final_render = df_cruce[cols_render].copy()
                     
                     # Renombrado cosmético de columnas para el usuario de control previo
                     df_final_render = df_final_render.rename(columns={
