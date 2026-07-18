@@ -37,14 +37,14 @@ def extraer_encabezado_estandar(texto_bruto):
     """Extrae las variables de identificación del encabezado."""
     metadatos = {
         "dependencia": "No detectada", "fecha": "No detectada", 
-        "nombre_proyecto": "No detectado", "id_mga": "No detectado", 
+        "nombre_proyecto_encabezado": "No detectado", "id_mga": "No detectado", 
         "bpin": "No detectado", "codigo_pi": "No detectado"
     }
     match_fecha = re.search(r"Fecha:\s*([\d/:-]+)", texto_bruto, re.IGNORECASE)
     if match_fecha: metadatos["fecha"] = match_fecha.group(1)
     
     match_nom = re.search(r"PROYECTO INVERSIÓN:\s*[“\"']([^”\"']+)[”\"']", texto_bruto, re.IGNORECASE)
-    if match_nom: metadatos["nombre_proyecto"] = match_nom.group(1).strip()
+    if match_nom: metadatos["nombre_proyecto_encabezado"] = match_nom.group(1).strip()
         
     match_mga = re.search(r"ID-MGA:\s*(\w+)", texto_bruto, re.IGNORECASE)
     match_bpin = re.search(r"BPIN\s*(\d+)", texto_bruto, re.IGNORECASE)
@@ -63,18 +63,17 @@ def procesar_tablas_estandar(texto_bruto):
     dicc_indicadores = {}
     lista_actividades_poai = []
     recurso_total_proyecto = "$0"
+    nombre_proyecto_tabla = "No detectado"
     
     for bloque in bloques:
         lineas = bloque.split("\n")
         if not lineas: continue
         encabezado_tabla = lineas[0].lower()
         
-        # Auxiliar para limpiar celdas conservando la estructura exacta de columnas
         def descomponer_linea(l):
             return [p.strip() for p in l.split("|")]
         
         # --- TABLA 1: DATOS BÁSICOS Y OBJETIVOS ---
-        # Columnas: [0]# | [1]No.CV | [2]Dependencia | [3]Nombre Proyecto | [4]Fecha CV | [5]Objetivo General Proyecto | [6]Objetivo Específico
         if "no.cv" in encabezado_tabla and "objetivo general proyecto" in encabezado_tabla:
             for l in lineas[1:]:
                 partes = descomponer_linea(l)
@@ -85,11 +84,14 @@ def procesar_tablas_estandar(texto_bruto):
                     dicc_indicadores[idx]["Dependencia"] = partes[2] if len(partes) > 2 else ""
                     dicc_indicadores[idx]["Nombre Proyecto"] = partes[3] if len(partes) > 3 else ""
                     dicc_indicadores[idx]["Fecha CV"] = partes[4] if len(partes) > 4 else ""
-                    dicc_indicadores[idx]["Objetivo General Proyecto"] = partes[5] if len(partes) > 5 else ""
+                    dicc_indicadores[idx]["Objective General Proyecto"] = partes[5] if len(partes) > 5 else ""
                     dicc_indicadores[idx]["Objetivo Específico"] = partes[6] if len(partes) > 6 else ""
+                    
+                    # Extraemos el nombre del proyecto de la primera fila válida encontrada
+                    if nombre_proyecto_tabla == "No detectado" and partes[3]:
+                        nombre_proyecto_tabla = partes[3]
 
         # --- TABLA 2: ALINEACIÓN PDD ---
-        # Columnas: [0]# | [1]Sector MGA-SAP | [2]Línea Estratégica | [3]Programa Plan de Desarrollo | [4]Programa MGA | [5]Meta de Resultado | [6]Subprograma Plan
         elif "sector mga-sap" in encabezado_tabla and "subprograma plan" in encabezado_tabla:
             for l in lineas[1:]:
                 partes = descomponer_linea(l)
@@ -103,15 +105,20 @@ def procesar_tablas_estandar(texto_bruto):
                         dicc_indicadores[idx]["Meta de Resultado"] = partes[5] if len(partes) > 5 else ""
                         dicc_indicadores[idx]["Subprograma Plan"] = partes[6] if len(partes) > 6 else ""
 
-        # --- TABLA 3: PROGRAMACIÓN PLURIANUAL ---
-        # Columnas: [0]# | [1]Meta Producto Plan | [2]P.G. PI | [3]2024 PI | [4]2025 PI | [5]2026 PI | [6]2027 PI | [7]Código y Nombre Producto Catalogo - MP | [8]Indicador de Producto Catalogo - MP | [9]Unidad de Medida | [10]Meta Total MGA | [11]2024 MGA | [12]2025 MGA | [13]2026 MGA | [14]2027 MGA
+        # --- TABLA 3: PROGRAMACIÓN PLURIANUAL + EXTRACCIÓN CÓDIGO MP ---
         elif "meta producto plan" in encabezado_tabla and "meta total mga" in encabezado_tabla:
             for l in lineas[1:]:
                 partes = descomponer_linea(l)
                 if partes and partes[0].isdigit():
                     idx = int(partes[0])
                     if idx in dicc_indicadores:
-                        dicc_indicadores[idx]["Meta Producto Plan"] = partes[1] if len(partes) > 1 else ""
+                        meta_producto_texto = partes[1] if len(partes) > 1 else ""
+                        dicc_indicadores[idx]["Meta Producto Plan"] = meta_producto_texto
+                        
+                        # EXTRACCIÓN ADICIONAL: Aislar el Código MP usando Expresiones Regulares
+                        match_mp = re.search(r"(MP\d+)", meta_producto_texto)
+                        dicc_indicadores[idx]["Código MP"] = match_mp.group(1) if match_mp else "Sin Código"
+                        
                         dicc_indicadores[idx]["P.G. PI"] = partes[2] if len(partes) > 2 else ""
                         dicc_indicadores[idx]["2024 PI"] = partes[3] if len(partes) > 3 else ""
                         dicc_indicadores[idx]["2025 PI"] = partes[4] if len(partes) > 4 else ""
@@ -127,7 +134,6 @@ def procesar_tablas_estandar(texto_bruto):
                         dicc_indicadores[idx]["2027 MGA"] = partes[14] if len(partes) > 14 else ""
 
         # --- TABLA 4: TIPO DE PRODUCTO MGA ---
-        # Columnas: [0]# | [1]Observación por Indicador MGA - Formulador | [2]Producto CV - MGA | [3]Indicador de Producto CV - MGA | [4]Tipo prod. | [5]Tipo prod2
         elif "observación por indicador mga" in encabezado_tabla and "producto cv - mga" in encabezado_tabla:
             for l in lineas[1:]:
                 partes = descomponer_linea(l)
@@ -152,14 +158,15 @@ def procesar_tablas_estandar(texto_bruto):
                 partes = descomponer_linea(l)
                 texto_linea = " ".join(partes).upper()
                 
-                # Detectar fila de cierre con la sumatoria de recursos
                 if "TOTAL RECURSOS 2027" in texto_linea or "PROYECTO DE INVERSIÓN" in texto_linea:
                     recurso_total_proyecto = partes[-1] if partes else "$0"
                     continue
                 
                 if len(partes) >= 3 and "FIRMA" not in partes[0].upper() and partes[0] != "":
+                    match_mp_act = re.search(r"(MP\d+)", partes[pos_mp])
                     actividad = {
                         "COD. META DE PRODUCTO": partes[pos_mp] if len(partes) > pos_mp else "",
+                        "Código MP Extrayendo": match_mp_act.group(1) if match_mp_act else "Sin Código",
                         "PRODUCTO MGA (COD+TEXTO)": partes[pos_prod] if len(partes) > pos_prod else "",
                         "ACTIVIDAD DEL PROYECTO": partes[pos_act] if len(partes) > pos_act else "",
                         "RECURSO TOTAL 2027": partes[pos_rec] if pos_rec < len(partes) else "$0"
@@ -167,9 +174,16 @@ def procesar_tablas_estandar(texto_bruto):
                     lista_actividades_poai.append(actividad)
 
     df_indicadores = pd.DataFrame.from_dict(dicc_indicadores, orient="index")
+    
+    # Reorganizar columnas para dejar el "Código MP" en una ubicación visible e importante
+    if not df_indicadores.empty and "Código MP" in df_indicadores.columns:
+        cols = list(df_indicadores.columns)
+        cols.insert(0, cols.pop(cols.index("Código MP")))
+        df_indicadores = df_indicadores[cols]
+        
     df_poai = pd.DataFrame(lista_actividades_poai)
     
-    return df_indicadores, df_poai, recurso_total_proyecto
+    return df_indicadores, df_poai, recurso_total_proyecto, nombre_proyecto_tabla
 
 # ============================================================
 # INTERFAZ DE USUARIO DE STREAMLIT
@@ -189,18 +203,18 @@ if archivo_word is not None:
             st.session_state["texto_word_extraido"] = texto_extraido
             
             metadatos = extraer_encabezado_estandar(texto_extraido)
-            df_ind, df_poai, total_presupuesto = procesar_tablas_estandar(texto_extraido)
+            df_ind, df_poai, total_presupuesto, proyecto_nombre_tabla = procesar_tablas_estandar(texto_extraido)
             
             st.success("✅ ¡Archivo procesado con éxito!")
             
-            # Bloque 1: Datos de identificación
+            # Bloque 1: Datos de identificación usando el nombre extraído de la columna del proyecto
             st.markdown("### 📌 Identificación del Proyecto")
             c1, c2, c3 = st.columns(3)
-            c1.text_input("Proyecto de Inversión:", value=metadatos["nombre_proyecto"], disabled=True)
+            c1.text_input("Proyecto de Inversión (Extraído de la Tabla):", value=proyecto_nombre_tabla, disabled=True)
             c2.text_input("Código de Proyecto (PS-SAP):", value=metadatos["codigo_pi"], disabled=True)
             c3.text_input("Código BPIN:", value=metadatos["bpin"], disabled=True)
             
-            # Bloque 2: Matriz Unificada de Indicadores
+            # Bloque 2: Matriz Unificada de Indicadores con la nueva columna Código MP posicionada al inicio
             st.markdown("### 📊 Matriz Completa de Indicadores y Objetivos (Tablas 1-4)")
             if not df_ind.empty:
                 st.dataframe(df_ind, use_container_width=True)
@@ -215,7 +229,7 @@ if archivo_word is not None:
             else:
                 st.warning("No se detectaron actividades presupuestales en la Tabla 5.")
                 
-            # Guardado en sesión listo para el cruce con el archivo de Google Drive
+            # Guardado en sesión listo para cruces analíticos
             st.session_state["df_indicadores_estandar"] = df_ind
             st.session_state["df_poai_estandar"] = df_poai
             st.session_state["total_presupuesto_poai"] = total_presupuesto
