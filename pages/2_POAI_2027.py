@@ -238,13 +238,13 @@ if archivo_word is not None:
             st.error(f"🚨 Error en el procesamiento del documento: {e}")
 
 # ============================================================
-# COMPONENTE DE CRUCE CON PLAN INDICATIVO (MÉTODO EXCEL - PESTAÑA MP)
+# COMPONENTE DE CRUCE CON PLAN INDICATIVO (MÉTODO EXCEL - ACTUALIZADO PANDAS 2.x)
 # ============================================================
 
 st.markdown("---")
 st.subheader("🔍 Auditoría de Coherencia: Word vs. Plan Indicativo (Drive)")
 
-# CAMBIO CRÍTICO: Exportamos como formato Excel completo (.xlsx) en lugar de CSV
+# Exportamos como formato Excel completo (.xlsx) para acceder a las pestañas por su nombre
 URL_DRIVE_EXCEL = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtKgIV3ch3cQ-JbcAOTjQD8ss/export?format=xlsx"
 
 if "df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty:
@@ -253,8 +253,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
     if st.button("🚀 Ejecutar Cruce de Indicadores contra Drive"):
         with st.spinner("⏳ Descargando libro de Excel y extrayendo la pestaña 'MP'..."):
             try:
-                # 1. Leer el archivo Excel especificando la pestaña exacta "MP" y que los encabezados están en la fila 2 (header=1)
-                # Requiere la librería openpyxl instalada
+                # 1. Leer el archivo Excel especificando la pestaña exacta "MP" y encabezados en la fila 2 (header=1)
                 df_drive = pd.read_excel(URL_DRIVE_EXCEL, sheet_name="MP", header=1, engine="openpyxl")
                 
                 # Mapeo flexible sobre las columnas de la pestaña MP
@@ -328,8 +327,10 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     df_final_render = df_cruce[cols_render]
                     
                     st.markdown("##### 📈 Reporte de Alertas de Control Previo (Pestaña MP)")
+                    
+                    # CORRECCIÓN AQUÍ: Cambiamos .applymap() por .map() para compatibilidad con Pandas moderno
                     st.dataframe(
-                        df_final_render.style.applymap(color_semaforo, subset=["Resultado Validación"]),
+                        df_final_render.style.map(color_semaforo, subset=["Resultado Validación"]),
                         use_container_width=True
                     )
                     
@@ -343,7 +344,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                 else:
                     st.error("🚨 Mapeo de columnas fallido dentro de la pestaña MP.")
                     st.info(f"**Columnas leídas en la fila 2 de la pestaña 'MP':** {columnas_reales}")
-                    st.warning("Verifica si los nombres de los encabezados reales de la fila 2 sufrieron modificaciones drásticas.")
+                    st.warning("Verifica si los nombres de los encabezados reales de la fila 2 sufrieron modificaciones.")
                     
             except Exception as e:
                 st.error(f"❌ Error al procesar la pestaña MP en formato Excel: {e}")
