@@ -238,25 +238,23 @@ if archivo_word is not None:
             st.error(f"🚨 Error en el procesamiento del documento: {e}")
 
 # ============================================================
-# COMPONENTE DE CRUCE ENFOCADO EN DELIMITADOR DE GUION (-)
+# COMPONENTE DE AUDITORÍA CON DIAGNÓSTICO EN VIVO (DEBUG)
 # ============================================================
 
 st.markdown("---")
 st.subheader("🔍 Auditoría de Coherencia: Word vs. Plan Indicativo (Drive)")
 
-# Exportamos la hoja como Excel completo para garantizar acceso nativo por nombre de pestaña
 URL_DRIVE_EXCEL = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtKgIV3ch3cQ-JbcAOTjQD8ss/export?format=xlsx"
 
 if "df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty:
     df_word = st.session_state["df_indicadores_estandar"].copy()
     
     if st.button("🚀 Ejecutar Cruce de Indicadores contra Drive"):
-        with st.spinner("⏳ Extrayendo códigos antes del guion (-) y verificando correspondencias..."):
+        with st.spinner("⏳ Analizando correspondencias y generando logs de diagnóstico..."):
             try:
-                # 1. Leer el archivo Excel especificando la pestaña "MP" y que los encabezados están en la fila 2
+                # 1. Leer el archivo Excel especificando la pestaña "MP"
                 df_drive = pd.read_excel(URL_DRIVE_EXCEL, sheet_name="MP", header=1, engine="openpyxl")
                 
-                # Mapeo flexible de columnas para prevenir variaciones menores de mayúsculas/acentos
                 columnas_reales = list(df_drive.columns)
                 col_codigo_mp = None
                 col_indicador = None
@@ -270,64 +268,89 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                 
                 if col_codigo_mp and col_indicador:
                     
-                    # --- FUNCIÓN DE AISLAMIENTO POR GUION ---
+                    # Función de aislamiento por guion
                     def aislar_codigo_por_guion(valor):
                         if pd.isna(valor) or str(valor).strip().lower() == "nan":
-                            return None
-                        # Convertimos a texto, dividimos por el guion y extraemos la primera parte libre de espacios
+                            return ""
                         partes = str(valor).split('-')
-                        return partes[0].strip() if partes else None
+                        return str(partes[0]).strip()
 
-                    # Creamos mapas asociativos (diccionarios) en memoria indexados por el código extraído
+                    # Construir diccionarios de Drive
                     dict_drive_indicadores = {}
                     dict_drive_codigos_raw = {}
                     
-                    for _, fila in df_drive.iterrows():
+                    for idx, fila in df_drive.iterrows():
                         cod_raw = fila[col_codigo_mp]
                         ind_text = fila[col_indicador]
-                        
                         cod_limpio = aislar_codigo_por_guion(cod_raw)
-                        if cod_limpio:
+                        
+                        if col_codigo_mp and cod_limpio != "":
                             dict_drive_indicadores[cod_limpio] = str(ind_text).strip()
                             dict_drive_codigos_raw[cod_limpio] = str(cod_raw).strip()
 
-                    # 2. Iteración controlada del Word para prevenir desajustes posicionales
+                    # --------------------------------------------------------
+                    # VENTANA DE DIAGNÓSTICO EN VIVO (LOGS DE SEGUIMIENTO)
+                    # --------------------------------------------------------
+                    st.warning("🛠️ **Consola de Diagnóstico Interno (Revisa qué está comparando aquí):**")
+                    logs_diagnostico = []
+                    
                     resultados_validacion = []
                     codigos_drive_encontrados = []
                     descripciones_drive = []
                     
-                    for _, fila_word in df_word.iterrows():
+                    # Iterar fila por fila sobre el Word
+                    for i, fila_word in df_word.iterrows():
                         cod_word_raw = fila_word.get("Código MP", "")
                         cod_word_limpio = aislar_codigo_por_guion(cod_word_raw)
                         
-                        if not cod_word_limpio:
-                            resultados_validacion.append("🔴 Código ausente o mal estructurado en Word")
+                        if cod_word_limpio == "":
+                            resultados_validacion.append("🔴 Código ausente en Word")
                             codigos_drive_encontrados.append("N/A")
                             descripciones_drive.append("N/A")
+                            logs_diagnostico.append(f"Fila {i}: Word original era vacío o nulo. Saltado.")
                         else:
-                            # Evaluación estricta sobre la existencia de la clave
+                            # Verificamos si existe la llave exacta en nuestro mapa del Drive
                             if cod_word_limpio in dict_drive_indicadores:
                                 resultados_validacion.append("🟢 Corresponde a la MP")
                                 codigos_drive_encontrados.append(dict_drive_codigos_raw[cod_word_limpio])
                                 descripciones_drive.append(dict_drive_indicadores[cod_word_limpio])
+                                
+                                # Logueamos el emparejamiento exacto realizado
+                                logs_diagnostico.append(
+                                    f"✅ Fila {i}: Cruzó exitosamente. "
+                                    f"Clave Word: '{cod_word_limpio}' match con Clave Drive: '{cod_word_limpio}' "
+                                    f"(Texto original Drive: '{dict_drive_codigos_raw[cod_word_limpio]}')"
+                                )
                             else:
                                 resultados_validacion.append("🔴 Código no encontrado en Drive")
                                 codigos_drive_encontrados.append("NO EXISTE")
                                 descripciones_drive.append("NO EXISTE")
+                                
+                                logs_diagnostico.append(
+                                    f"❌ Fila {i}: FALLÓ EL CRUCE. "
+                                    f"Buscó la clave '{cod_word_limpio}' (extraída de '{cod_word_raw}') "
+                                    f"pero esa clave NO existe dentro de los códigos indexados del Drive."
+                                )
                     
-                    # Inyección de las series procesadas al DataFrame
+                    # Renderizar los logs en una caja de texto colapsable para inspección inmediata
+                    with st.expander("👁️ Ver trazabilidad detallada del análisis de códigos", expanded=True):
+                        st.code("\n".join(logs_diagnostico), language="text")
+                    
+                    # --------------------------------------------------------
+                    # FIN DEL BLOQUE DE DIAGNÓSTICO
+                    # --------------------------------------------------------
+
+                    # Inyectar resultados al DataFrame
                     df_word["Código en Drive"] = codigos_drive_encontrados
                     df_word["Indicador en Drive"] = descripciones_drive
                     df_word["Resultado Validación"] = resultados_validacion
                     
-                    # Estilo condicional para el semáforo visual de control previo
                     def color_semaforo(val):
                         if "🟢" in str(val):
                             return "background-color: #d4edda; color: #155724; font-weight: bold;"
                         else:
                             return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
                     
-                    # Proyección ordenada de columnas para la tabla de visualización
                     df_final_render = df_word[[
                         "Código MP", 
                         "Código en Drive", 
@@ -345,10 +368,11 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         use_container_width=True
                     )
                     
-                    # Resumen y conteo de incidencias encontradas
-                    errores = df_word["Resultado Validación"].str.contains("🔴").sum()
-                    if errores > 0:
-                        st.error(f"⚠️ Se detectaron {errores} alertas en el cruce de consistencia. Verifique las celdas en rojo.")
+                    # Conteo real basado en el vector inyectado
+                    conteo_rojos = df_word["Resultado Validación"].str.contains("🔴").sum()
+                    
+                    if conteo_rojos > 0:
+                        st.error(f"⚠️ Se detectaron {conteo_rojos} alertas en el cruce de consistencia. Revisa los registros marcados en rojo.")
                     else:
                         st.success("🎉 ¡Perfecto! Todos los códigos estructurados mediante el delimitador '-' corresponden plenamente a las Metas de Producto oficiales.")
                         
@@ -357,7 +381,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     st.info(f"**Columnas analizadas en la fila 2:** {columnas_reales}")
                     
             except Exception as e:
-                st.error(f"❌ Ocurrió un error al procesar el mapeo indexado por guion: {e}")
+                st.error(f"❌ Ocurrió un error al procesar el mapeo de depuración: {e}")
                 
 else:
     st.info("💡 Por favor, primero carga un archivo Word en la sección superior para habilitar el botón de cruce.")
