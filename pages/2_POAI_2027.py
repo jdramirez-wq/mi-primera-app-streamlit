@@ -238,25 +238,25 @@ if archivo_word is not None:
             st.error(f"🚨 Error en el procesamiento del documento: {e}")
 
 # ============================================================
-# COMPONENTE DE CRUCE CON PLAN INDICATIVO (HOJA DE DRIVE ULTRA-ROBUSTA)
+# COMPONENTE DE CRUCE CON PLAN INDICATIVO (PESTANA "MP")
 # ============================================================
 
 st.markdown("---")
 st.subheader("🔍 Auditoría de Coherencia: Word vs. Plan Indicativo (Drive)")
 
-# URL de descarga directa en formato CSV
-URL_DRIVE = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtKgIV3ch3cQ-JbcAOTjQD8ss/export?format=csv"
+# MODIFICACIÓN CRÍTICA: Añadimos &sheet=MP para forzar la descarga de la pestaña correcta
+URL_DRIVE = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtKgIV3ch3cQ-JbcAOTjQD8ss/export?format=csv&sheet=MP"
 
 if "df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty:
     df_word = st.session_state["df_indicadores_estandar"]
     
     if st.button("🚀 Ejecutar Cruce de Indicadores contra Drive"):
-        with st.spinner("⏳ Analizando estructura del Drive y cruzando datos..."):
+        with st.spinner("⏳ Conectando a la pestaña MP del Drive y procesando fila 2..."):
             try:
                 # 1. Leer el archivo omitiendo la primera fila (encabezados en fila 2)
                 df_drive = pd.read_csv(URL_DRIVE, header=1)
                 
-                # Mapeo flexible: Pasamos los nombres reales a una lista limpia para buscar coincidencias
+                # Mapeo flexible sobre la pestaña MP
                 columnas_reales = list(df_drive.columns)
                 
                 col_codigo_mp = None
@@ -299,7 +299,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         ind_drive = str(row.get("Indicador de producto", "")).strip().lower()
                         
                         if not row.get("Indicador de producto") or pd.isna(row.get("Indicador de producto")) or ind_drive == "nan":
-                            return "🔴 Código MP no encontrado en Drive"
+                            return "🔴 Código MP no encontrado en la pestaña MP"
                         elif ind_word == ind_drive:
                             return "🟢 Coincide"
                         else:
@@ -326,7 +326,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     cols_render = [c for c in columnas_resultado if c in df_cruce.columns]
                     df_final_render = df_cruce[cols_render]
                     
-                    st.markdown("##### 📈 Reporte de Alertas de Control Previo")
+                    st.markdown("##### 📈 Reporte de Alertas de Control Previo (Pestaña MP)")
                     st.dataframe(
                         df_final_render.style.applymap(color_semaforo, subset=["Resultado Validación"]),
                         use_container_width=True
@@ -335,16 +335,16 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     # Resumen técnico
                     errores = df_cruce["Resultado Validación"].str.contains("🔴").sum()
                     if errores > 0:
-                        st.error(f"⚠️ Se detectaron {errores} alertas en el cruce técnico. Verifica las descripciones resaltadas en rojo.")
+                        st.error(f"⚠️ Se detectaron {errores} alertas en el cruce con la pestaña MP. Revisa las diferencias.")
                     else:
-                        st.success("🎉 ¡Excelente! Todos los indicadores coinciden plenamente con la parametrización del Plan Indicativo.")
+                        st.success("🎉 ¡Excelente! Todos los indicadores coinciden plenamente con la pestaña MP del Plan Indicativo.")
                         
                 else:
-                    st.error("🚨 No se pudieron mapear automáticamente las columnas del Drive.")
-                    st.info(f"**Columnas leídas en la fila 2:** {columnas_reales}")
-                    st.warning("Asegúrate de que la fila 2 contenga una columna que incluya la palabra 'Código MP' y otra con las palabras 'Indicador' y 'Producto'.")
+                    st.error("🚨 Mapeo fallido en la pestaña MP.")
+                    st.info(f"**Columnas leídas en la fila 2 de la pestaña MP:** {columnas_reales}")
+                    st.warning("Verifica si las columnas de la fila 2 en la pestaña 'MP' mantienen las palabras clave buscadas.")
                     
             except Exception as e:
-                st.error(f"❌ Error al procesar el archivo en línea: {e}")
+                st.error(f"❌ Error al procesar la pestaña MP: {e}")
 else:
     st.info("💡 Por favor, primero carga un archivo Word en la sección superior para habilitar el botón de cruce.")
