@@ -238,7 +238,7 @@ if archivo_word is not None:
             st.error(f"🚨 Error en el procesamiento del documento: {e}")
 
 # ============================================================
-# COMPONENTE DE AUDITORÍA CON DIAGNÓSTICO EN VIVO (DEBUG)
+# COMPONENTE DE AUDITORÍA: VALIDACIÓN DE NUMERACIÓN DE INDICADORES
 # ============================================================
 
 st.markdown("---")
@@ -249,139 +249,148 @@ URL_DRIVE_EXCEL = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtK
 if "df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty:
     df_word = st.session_state["df_indicadores_estandar"].copy()
     
-    if st.button("🚀 Ejecutar Cruce de Indicadores contra Drive"):
-        with st.spinner("⏳ Analizando correspondencias y generando logs de diagnóstico..."):
+    if st.button("🚀 Ejecutar Cruce y Comparación de Indicadores"):
+        with st.spinner("⏳ Localizando filas por MP y comparando numeración de indicadores..."):
             try:
-                # 1. Leer el archivo Excel especificando la pestaña "MP"
+                # 1. Leer el archivo Excel (Pestaña MP, encabezados en fila 2)
                 df_drive = pd.read_excel(URL_DRIVE_EXCEL, sheet_name="MP", header=1, engine="openpyxl")
                 
                 columnas_reales = list(df_drive.columns)
                 col_codigo_mp = None
-                col_indicador = None
+                col_indicador_drive = None
                 
                 for col in columnas_reales:
                     col_limpia = str(col).strip().lower().replace("á","a").replace("é","e").replace("í","i").replace("ó","o").replace("ú","u")
                     if "codigo mp" in col_limpia:
                         col_codigo_mp = col
                     elif "indicador" in col_limpia and "producto" in col_limpia:
-                        col_indicador = col
+                        col_indicador_drive = col
                 
-                if col_codigo_mp and col_indicador:
+                if col_codigo_mp and col_indicador_drive:
                     
-                    # Función de aislamiento por guion
+                    # Función para aislar el código de la MP por el guion
                     def aislar_codigo_por_guion(valor):
                         if pd.isna(valor) or str(valor).strip().lower() == "nan":
                             return ""
                         partes = str(valor).split('-')
                         return str(partes[0]).strip()
 
-                    # Construir diccionarios de Drive
+                    # --- NUEVA FUNCIÓN: EXTRAE SOLO LOS NÚMEROS DEL INDICADOR ---
+                    # Si el indicador dice "Indicador 2. Porcentaje de...", extrae "2"
+                    def extraer_numeracion_indicador(texto):
+                        if pd.isna(texto) or str(texto).strip().lower() == "nan":
+                            return ""
+                        # Busca el primer bloque de números pequeños (1 a 3 dígitos) que suele identificar al número de indicador
+                        match = re.search(r'\b\d{1,3}\b', str(texto))
+                        return match.group(0).strip() if match else ""
+
+                    # Mapeamos el Drive indexando por el código de la MP limpia
                     dict_drive_indicadores = {}
-                    dict_drive_codigos_raw = {}
-                    
-                    for idx, fila in df_drive.iterrows():
+                    for _, fila in df_drive.iterrows():
                         cod_raw = fila[col_codigo_mp]
-                        ind_text = fila[col_indicador]
+                        ind_text = fila[col_indicador_drive]
                         cod_limpio = aislar_codigo_por_guion(cod_raw)
                         
-                        if col_codigo_mp and cod_limpio != "":
+                        if cod_limpio:
+                            # Guardamos el texto completo del indicador del Drive indexado por su código MP
                             dict_drive_indicadores[cod_limpio] = str(ind_text).strip()
-                            dict_drive_codigos_raw[cod_limpio] = str(cod_raw).strip()
 
-                    # --------------------------------------------------------
-                    # VENTANA DE DIAGNÓSTICO EN VIVO (LOGS DE SEGUIMIENTO)
-                    # --------------------------------------------------------
-                    st.warning("🛠️ **Consola de Diagnóstico Interno (Revisa qué está comparando aquí):**")
+                    # Listas para almacenar la trazabilidad y resultados
                     logs_diagnostico = []
-                    
                     resultados_validacion = []
-                    codigos_drive_encontrados = []
-                    descripciones_drive = []
+                    indicadores_drive_encontrados = []
+                    numeros_word = []
+                    numeros_drive = []
                     
-                    # Iterar fila por fila sobre el Word
+                    # 2. Iterar sobre las filas del Word
                     for i, fila_word in df_word.iterrows():
                         cod_word_raw = fila_word.get("Código MP", "")
                         cod_word_limpio = aislar_codigo_por_guion(cod_word_raw)
+                        texto_indicador_word = fila_word.get("Indicador de Producto CV - MGA", "")
                         
-                        if cod_word_limpio == "":
-                            resultados_validacion.append("🔴 Código ausente en Word")
-                            codigos_drive_encontrados.append("N/A")
-                            descripciones_drive.append("N/A")
-                            logs_diagnostico.append(f"Fila {i}: Word original era vacío o nulo. Saltado.")
+                        # Extraer el número del indicador del Word (Ej: "1" o "2")
+                        num_ind_word = extraer_numeracion_indicador(texto_indicador_word)
+                        numeros_word.append(num_ind_word if num_ind_word else "No detectado")
+                        
+                        if not cod_word_limpio:
+                            resultados_validacion.append("🔴 MP ausente en Word")
+                            indicadores_drive_encontrados.append("N/A")
+                            numeros_drive.append("N/A")
+                            logs_diagnostico.append(f"Fila {i}: Código MP vacío en Word.")
                         else:
-                            # Verificamos si existe la llave exacta en nuestro mapa del Drive
+                            # Buscar la fila correspondiente en el Drive usando la MP
                             if cod_word_limpio in dict_drive_indicadores:
-                                resultados_validacion.append("🟢 Corresponde a la MP")
-                                codigos_drive_encontrados.append(dict_drive_codigos_raw[cod_word_limpio])
-                                descripciones_drive.append(dict_drive_indicadores[cod_word_limpio])
+                                texto_indicador_drive = dict_drive_indicadores[cod_word_limpio]
+                                indicadores_drive_encontrados.append(texto_indicador_drive)
                                 
-                                # Logueamos el emparejamiento exacto realizado
-                                logs_diagnostico.append(
-                                    f"✅ Fila {i}: Cruzó exitosamente. "
-                                    f"Clave Word: '{cod_word_limpio}' match con Clave Drive: '{cod_word_limpio}' "
-                                    f"(Texto original Drive: '{dict_drive_codigos_raw[cod_word_limpio]}')"
-                                )
+                                # Extraer el número del indicador del Drive
+                                num_ind_drive = extraer_numeracion_indicador(texto_indicador_drive)
+                                numeros_drive.append(num_ind_drive if num_ind_drive else "No detectado")
+                                
+                                # --- LA VERDADERA COMPARACIÓN BASADA EN NÚMEROS ---
+                                if num_ind_word and num_ind_drive and num_ind_word == num_ind_drive:
+                                    resultados_validacion.append("🟢 Coincide Numeración")
+                                    logs_diagnostico.append(
+                                        f"✅ Fila {i} (MP {cod_word_limpio}): Coincidencia exacta. "
+                                        f"Número Word: '{num_ind_word}' == Número Drive: '{num_ind_drive}'."
+                                    )
+                                else:
+                                    resultados_validacion.append("🔴 Diferente Indicador")
+                                    logs_diagnostico.append(
+                                        f"❌ Fila {i} (MP {cod_word_limpio}): ¡FALSO POSITIVO EVITADO! "
+                                        f"La MP existe, pero el indicador en Word tiene número '{num_ind_word}' "
+                                        f"y en el Drive corresponde al número '{num_ind_drive}'."
+                                    )
                             else:
-                                resultados_validacion.append("🔴 Código no encontrado en Drive")
-                                codigos_drive_encontrados.append("NO EXISTE")
-                                descripciones_drive.append("NO EXISTE")
-                                
-                                logs_diagnostico.append(
-                                    f"❌ Fila {i}: FALLÓ EL CRUCE. "
-                                    f"Buscó la clave '{cod_word_limpio}' (extraída de '{cod_word_raw}') "
-                                    f"pero esa clave NO existe dentro de los códigos indexados del Drive."
-                                )
+                                resultados_validacion.append("🔴 MP no existe en Drive")
+                                indicadores_drive_encontrados.append("NO EXISTE META")
+                                numeros_drive.append("N/A")
+                                logs_diagnostico.append(f"❌ Fila {i}: La Meta de Producto '{cod_word_limpio}' no se encuentra en el Drive.")
                     
-                    # Renderizar los logs en una caja de texto colapsable para inspección inmediata
-                    with st.expander("👁️ Ver trazabilidad detallada del análisis de códigos", expanded=True):
-                        st.code("\n".join(logs_diagnostico), language="text")
-                    
-                    # --------------------------------------------------------
-                    # FIN DEL BLOQUE DE DIAGNÓSTICO
-                    # --------------------------------------------------------
-
-                    # Inyectar resultados al DataFrame
-                    df_word["Código en Drive"] = codigos_drive_encontrados
-                    df_word["Indicador en Drive"] = descripciones_drive
+                    # Inyectar las nuevas métricas al DataFrame de visualización
+                    df_word["Indicador en Drive"] = indicadores_drive_encontrados
+                    df_word["Num Word"] = numeros_word
+                    df_word["Num Drive"] = numeros_drive
                     df_word["Resultado Validación"] = resultados_validacion
                     
+                    # Desplegar la consola de trazabilidad de inmediato
+                    st.warning("🛠️ **Consola de Análisis de Numeración Interna:**")
+                    with st.expander("👁️ Ver comparación detallada de números de indicadores", expanded=True):
+                        st.code("\n".join(logs_diagnostico), language="text")
+                    
+                    # Formato semáforo para la tabla
                     def color_semaforo(val):
                         if "🟢" in str(val):
                             return "background-color: #d4edda; color: #155724; font-weight: bold;"
                         else:
                             return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
                     
+                    # Proyectar el DataFrame final ordenado para el analista
                     df_final_render = df_word[[
                         "Código MP", 
-                        "Código en Drive", 
-                        "No.CV", 
+                        "Num Word",
                         "Indicador de Producto CV - MGA", 
+                        "Num Drive",
                         "Indicador en Drive", 
                         "Resultado Validación"
                     ]].copy()
                     
-                    df_final_render = df_final_render.rename(columns={"Código MP": "Código en Word"})
-                    
-                    st.markdown("##### 📈 Reporte de Alertas de Control Previo (Pestaña MP)")
+                    st.markdown("##### 📈 Reporte de Consistencia de Indicadores (Filtro por Numeración)")
                     st.dataframe(
                         df_final_render.style.map(color_semaforo, subset=["Resultado Validación"]),
                         use_container_width=True
                     )
                     
-                    # Conteo real basado en el vector inyectado
-                    conteo_rojos = df_word["Resultado Validación"].str.contains("🔴").sum()
-                    
-                    if conteo_rojos > 0:
-                        st.error(f"⚠️ Se detectaron {conteo_rojos} alertas en el cruce de consistencia. Revisa los registros marcados en rojo.")
+                    conteo_errores = df_word["Resultado Validación"].str.contains("🔴").sum()
+                    if conteo_errores > 0:
+                        st.error(f"⚠️ Se detectaron {conteo_errores} diferencias entre el indicador asignado en Word y el Plan Indicativo del Drive.")
                     else:
-                        st.success("🎉 ¡Perfecto! Todos los códigos estructurados mediante el delimitador '-' corresponden plenamente a las Metas de Producto oficiales.")
+                        st.success("🎉 ¡Excelente! Todos los indicadores coinciden plenamente en su numeración con el Drive.")
                         
                 else:
-                    st.error("🚨 Estructura de cabeceras ilegible en la pestaña MP del Drive.")
-                    st.info(f"**Columnas analizadas en la fila 2:** {columnas_reales}")
+                    st.error("🚨 No se pudieron mapear las columnas 'Código MP' e 'Indicador de Producto' en el Drive.")
                     
             except Exception as e:
-                st.error(f"❌ Ocurrió un error al procesar el mapeo de depuración: {e}")
-                
+                st.error(f"❌ Error en el procesamiento del cruce por numeración: {e}")
 else:
-    st.info("💡 Por favor, primero carga un archivo Word en la sección superior para habilitar el botón de cruce.")
+    st.info("💡 Por favor, primero carga un archivo Word en la sección superior.")
