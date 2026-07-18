@@ -238,35 +238,38 @@ if archivo_word is not None:
             st.error(f"🚨 Error en el procesamiento del documento: {e}")
 
 # ============================================================
-# COMPONENT DE CRUCE CON PLAN INDICATIVO (GOOGLE SHEETS)
+# COMPONENTE DE CRUCE CON PLAN INDICATIVO (GOOGLE SHEETS - FILA 2)
 # ============================================================
 
 st.markdown("---")
 st.subheader("🔍 Auditoría de Coherencia: Word vs. Plan Indicativo (Drive)")
 
-# Transformamos la URL compartida de Drive en un enlace de descarga directa en formato CSV
+# URL de descarga directa en formato CSV
 URL_DRIVE = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtKgIV3ch3cQ-JbcAOTjQD8ss/export?format=csv"
 
 if "df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty:
     df_word = st.session_state["df_indicadores_estandar"]
     
     if st.button("🚀 Ejecutar Cruce de Indicadores contra Drive"):
-        with st.spinner("⏳ Descargando Plan Indicativo desde Drive y cruzando llaves..."):
+        with st.spinner("⏳ Descargando Plan Indicativo desde Drive y omitiendo fila 1..."):
             try:
-                # 1. Leer el archivo de Drive directamente usando Pandas
-                df_drive = pd.read_csv(URL_DRIVE)
+                # AJUSTE CRÍTICO: header=1 le indica a Pandas que los títulos de columna están en la fila 2
+                df_drive = pd.read_csv(URL_DRIVE, header=1)
                 
-                # Normalizamos nombres de columnas del Drive para evitar errores de espacios
-                df_drive.columns = [c.strip() for c in df_drive.columns]
+                # Normalizamos nombres de columnas del Drive para eliminar espacios
+                df_drive.columns = [str(c).strip() for c in df_drive.columns]
                 
                 if "Código MP" in df_drive.columns and "Indicador de producto" in df_drive.columns:
                     
-                    # Seleccionamos solo las columnas necesarias de Drive para el cruce
-                    df_drive_clean = df_drive[["Código MP", "Indicador de producto"]].dropna()
+                    # Seleccionamos y limpiamos las columnas del Drive para el cruce
+                    df_drive_clean = df_drive[["Código MP", "Indicador de producto"]].dropna(subset=["Código MP"])
+                    df_drive_clean["Código MP"] = df_drive_clean["Código MP"].astype(str).str.strip()
                     df_drive_clean = df_drive_clean.drop_duplicates(subset=["Código MP"])
                     
-                    # 2. Realizar el merge (cruce) usando el "Código MP" como Llave Primaria
-                    # Mantenemos las filas del Word
+                    # Asegurar consistencia de la llave en el DataFrame del Word
+                    df_word["Código MP"] = df_word["Código MP"].astype(str).str.strip()
+                    
+                    # Realizar el cruce (merge) usando el "Código MP" como llave
                     df_cruce = pd.merge(
                         df_word, 
                         df_drive_clean, 
@@ -275,13 +278,12 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         suffixes=('_word', '_drive')
                     )
                     
-                    # 3. Lógica de Validación (Semáforo Verde / Rojo)
+                    # Lógica de Validación (Semáforo Verde / Rojo)
                     def validar_coherencia(row):
-                        # Limpiamos los textos eliminando espacios de más y pasándolos a minúsculas
                         ind_word = str(row.get("Indicador de Producto CV - MGA", "")).strip().lower()
                         ind_drive = str(row.get("Indicador de producto", "")).strip().lower()
                         
-                        if not ind_drive or ind_drive == "nan":
+                        if not row.get("Indicador de producto") or pd.isna(row.get("Indicador de producto")):
                             return "🔴 Código MP no encontrado en Drive"
                         elif ind_word == ind_drive:
                             return "🟢 Coincide"
@@ -290,14 +292,14 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     
                     df_cruce["Resultado Validación"] = df_cruce.apply(validar_coherencia, axis=1)
                     
-                    # 4. Dar formato visual y colores a las filas de la tabla en Streamlit
+                    # Formato visual de alertas en Streamlit
                     def color_semaforo(val):
                         if "🟢" in str(val):
                             return "background-color: #d4edda; color: #155724; font-weight: bold;"
                         else:
                             return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
                     
-                    # Columnas ordenadas para la visualización del resultado final
+                    # Columnas organizadas para el reporte final
                     columnas_resultado = [
                         "Código MP", 
                         "No.CV", 
@@ -306,7 +308,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         "Resultado Validación"
                     ]
                     
-                    # Filtrar solo las columnas existentes para evitar errores visuales
                     cols_render = [c for c in columnas_resultado if c in df_cruce.columns]
                     df_final_render = df_cruce[cols_render]
                     
@@ -316,18 +317,18 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         use_container_width=True
                     )
                     
-                    # Resumen de métricas del cruce
+                    # Despliegue de alertas de resumen técnico
                     errores = df_cruce["Resultado Validación"].str.contains("🔴").sum()
                     if errores > 0:
-                        st.error(f"⚠️ Se detectaron {errores} inconsistencia(s) en las descripciones de los indicadores. Es necesario revisar el archivo Word.")
+                        st.error(f"⚠️ Se detectaron {errores} alertas en el cruce técnico. Verifica las descripciones resaltadas en rojo.")
                     else:
-                        st.success("🎉 ¡Perfecto! Todos los indicadores analizados coinciden exactamente con el Plan Indicativo oficial.")
+                        st.success("🎉 ¡Excelente! Todos los indicadores analizados coinciden plenamente con la parametrización del Plan Indicativo.")
                         
                 else:
-                    st.error("🚨 El archivo de Google Drive no contiene las columnas requeridas: 'Código MP' o 'Indicador de producto'.")
-                    st.info(f"Columnas detectadas en el Drive: {list(df_drive.columns)}")
+                    st.error("🚨 El archivo de Google Drive no contiene las columnas esperadas en la fila 2.")
+                    st.info(f"Columnas leídas en la fila 2 del Drive: {list(df_drive.columns)}")
                     
             except Exception as e:
-                st.error(f" No se pudo procesar el cruce automático. Asegúrate de que el enlace de Drive tenga permisos para 'Cualquier persona con el enlace' como Lector. Detalle técnico: {e}")
+                st.error(f" No se pudo procesar el archivo en línea. Asegúrate de que el documento de Drive tenga permisos para 'Cualquier persona con el enlace' como Lector. Detalle: {e}")
 else:
-    st.info("💡 Por favor, primero sube un archivo Word en la sección superior para extraer las Metas de Producto.")
+    st.info("💡 Por favor, primero carga un archivo Word en la sección superior para habilitar el botón de cruce.")
