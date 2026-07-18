@@ -259,10 +259,10 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                 # Normalizamos nombres de columnas del Drive para eliminar espacios
                 df_drive.columns = [str(c).strip() for c in df_drive.columns]
                 
-                if "Código MP" in df_drive.columns and "Indicador de producto" in df_drive.columns:
+                if "Código MP" in df_drive.columns and "Indicador de Producto" in df_drive.columns:
                     
                     # Seleccionamos y limpiamos las columnas del Drive para el cruce
-                    df_drive_clean = df_drive[["Código MP", "Indicador de producto"]].dropna(subset=["Código MP"])
+                    df_drive_clean = df_drive[["Código MP", "Indicador de Producto"]].dropna(subset=["Código MP"])
                     df_drive_clean["Código MP"] = df_drive_clean["Código MP"].astype(str).str.strip()
                     df_drive_clean = df_drive_clean.drop_duplicates(subset=["Código MP"])
                     
@@ -281,9 +281,9 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     # Lógica de Validación (Semáforo Verde / Rojo)
                     def validar_coherencia(row):
                         ind_word = str(row.get("Indicador de Producto CV - MGA", "")).strip().lower()
-                        ind_drive = str(row.get("Indicador de producto", "")).strip().lower()
+                        ind_drive = str(row.get("Indicador de Producto", "")).strip().lower()
                         
-                        if not row.get("Indicador de producto") or pd.isna(row.get("Indicador de producto")):
+                        if not row.get("Indicador de Producto") or pd.isna(row.get("Indicador de Producto")):
                             return "🔴 Código MP no encontrado en Drive"
                         elif ind_word == ind_drive:
                             return "🟢 Coincide"
@@ -304,7 +304,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         "Código MP", 
                         "No.CV", 
                         "Indicador de Producto CV - MGA", 
-                        "Indicador de producto", 
+                        "Indicador de Producto", 
                         "Resultado Validación"
                     ]
                     
