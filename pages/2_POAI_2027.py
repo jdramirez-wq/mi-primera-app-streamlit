@@ -238,7 +238,7 @@ if archivo_word is not None:
             st.error(f"🚨 Error en el procesamiento del documento: {e}")
 
 # ============================================================
-# COMPONENTE DE AUDITORÍA: COMPARACIÓN POR CÓDIGO DE PRODUCTO (9 DÍGITOS)
+# COMPONENTE DE AUDITORÍA: CRUCE MULTI-REGISTRO (WORD vs. PI EN LÍNEA)
 # ============================================================
 
 st.markdown("---")
@@ -250,9 +250,9 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
     df_word = st.session_state["df_indicadores_estandar"].copy()
     
     if st.button("🚀 Ejecutar Cruce y Comparación de Indicadores"):
-        with st.spinner("⏳ Extrayendo códigos de producto antes del guion (-) y comparando..."):
+        with st.spinner("⏳ Extrayendo datos del PI en Línea y cruzando códigos de producto..."):
             try:
-                # 1. Leer el archivo Excel especificando la pestaña "MP" y encabezados en fila 2
+                # 1. Leer el archivo Excel en la pestaña "MP" (cabecera en fila 2)
                 df_drive = pd.read_excel(URL_DRIVE_EXCEL, sheet_name="MP", header=1, engine="openpyxl")
                 
                 columnas_reales = list(df_drive.columns)
@@ -268,36 +268,31 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                 
                 if col_codigo_mp and col_indicador_drive:
                     
-                    # --- FUNCIÓN DE EXTRACCIÓN DE CÓDIGO ANTES DEL GUION ---
+                    # Extractor de código antes del guion (-)
                     def extraer_codigo_producto(texto):
                         if pd.isna(texto) or str(texto).strip().lower() == "nan":
                             return ""
                         
                         texto_str = str(texto).strip()
-                        
-                        # 1. Si contiene guion, tomar la primera parte limpia
                         if "-" in texto_str:
                             partes = texto_str.split('-')
-                            # Extraer solo los dígitos del fragmento antes del guion
                             digitos = re.sub(r'\D', '', partes[0])
                             if digitos:
                                 return digitos
                         
-                        # 2. Respaldo: Buscar cualquier secuencia de números (ej. los 9 dígitos)
                         match = re.search(r'\b\d{7,10}\b', texto_str)
                         if match:
                             return match.group(0)
                         
-                        # Si es solo un número corto al inicio
                         match_corto = re.search(r'^\s*(\d+)', texto_str)
                         if match_corto:
                             return match_corto.group(1)
                             
                         return ""
 
-                    # Mapeamos el Drive indexando por el código de la columna "Código MP"
-                    dict_drive_indicadores = {}
-                    dict_drive_codigos_prod = {}
+                    # --- ESTRUCTURA PARA EL PI EN LÍNEA (Listas por MP para no perder registros) ---
+                    dict_drive_multiples_productos = {} # Almacena {MP: [cod_prod1, cod_prod2, ...]}
+                    dict_drive_textos = {}              # Almacena {MP: [texto1, texto2, ...]}
                     
                     for _, fila in df_drive.iterrows():
                         cod_mp_raw = fila[col_codigo_mp]
@@ -307,22 +302,26 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         cod_prod_drive_limpio = extraer_codigo_producto(ind_text_drive)
                         
                         if cod_mp_limpio:
-                            dict_drive_indicadores[cod_mp_limpio] = str(ind_text_drive).strip()
-                            dict_drive_codigos_prod[cod_mp_limpio] = cod_prod_drive_limpio
+                            if cod_mp_limpio not in dict_drive_multiples_productos:
+                                dict_drive_multiples_productos[cod_mp_limpio] = []
+                                dict_drive_textos[cod_mp_limpio] = []
+                            
+                            dict_drive_multiples_productos[cod_mp_limpio].append(cod_prod_drive_limpio)
+                            dict_drive_textos[cod_mp_limpio].append(str(ind_text_drive).strip())
 
-                    # Trazabilidad y almacenamiento de resultados
+                    # Almacenamiento de trazabilidad
                     logs_diagnostico = []
                     resultados_validacion = []
                     indicadores_drive_encontrados = []
                     codigos_prod_word = []
                     codigos_prod_drive = []
                     
-                    # Iterar sobre el DataFrame extraído del Word
+                    # 2. Iterar sobre las filas del Word
                     for i, fila_word in df_word.iterrows():
                         cod_word_mp_raw = fila_word.get("Código MP", "")
                         cod_word_mp_limpio = extraer_codigo_producto(cod_word_mp_raw)
                         
-                        # Extraer desde la columna especificada: "Producto CV - MGA"
+                        # Columna especificada del Word: "Producto CV - MGA"
                         texto_producto_word = fila_word.get("Producto CV - MGA", "")
                         cod_prod_word_limpio = extraer_codigo_producto(texto_producto_word)
                         
@@ -332,53 +331,54 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                             resultados_validacion.append("🔴 MP ausente en Word")
                             indicadores_drive_encontrados.append("N/A")
                             codigos_prod_drive.append("N/A")
-                            logs_diagnostico.append(f"Fila {i}: Código MP no especificado en Word.")
+                            logs_diagnostico.append(f"Fila {i}: Código MP ausente en el documento Word.")
                         else:
-                            # Buscar en el diccionario del Drive usando el Código MP como llave de fila
-                            if cod_word_mp_limpio in dict_drive_indicadores:
-                                texto_ind_drive = dict_drive_indicadores[cod_word_mp_limpio]
-                                cod_prod_drive_limpio = dict_drive_codigos_prod[cod_word_mp_limpio]
+                            # Buscar si la MP existe en el PI en Línea
+                            if cod_word_mp_limpio in dict_drive_multiples_productos:
+                                lista_codigos_pi = dict_drive_multiples_productos[cod_word_mp_limpio]
+                                lista_textos_pi = dict_drive_textos[cod_word_mp_limpio]
                                 
-                                indicadores_drive_encontrados.append(texto_ind_drive)
-                                codigos_prod_drive.append(cod_prod_drive_limpio if cod_prod_drive_limpio else "No detectado")
+                                # Mostrar en tabla qué se encontró en el PI en Línea
+                                codigos_prod_drive.append(" | ".join(lista_codigos_pi))
+                                indicadores_drive_encontrados.append(" || ".join(lista_textos_pi))
                                 
-                                # --- COMPARACIÓN DE CÓDIGOS DE PRODUCTO ---
-                                if cod_prod_word_limpio and cod_prod_drive_limpio and cod_prod_word_limpio == cod_prod_drive_limpio:
+                                # --- LA EVALUACIÓN DE ALERTAS ---
+                                if cod_prod_word_limpio and cod_prod_word_limpio in lista_codigos_pi:
                                     resultados_validacion.append("🟢 Corresponde Producto")
                                     logs_diagnostico.append(
-                                        f"✅ Fila {i} (MP {cod_word_mp_limpio}): Coincidencia exacta. "
-                                        f"Producto Word: '{cod_prod_word_limpio}' == Producto Drive: '{cod_prod_drive_limpio}'."
+                                        f"✅ Fila {i} (MP {cod_word_mp_limpio}): Coincidencia exitosa. "
+                                        f"El código Word '{cod_prod_word_limpio}' está presente en el PI en Línea ({lista_codigos_pi})."
                                     )
-                                elif not cod_prod_word_limpio or not cod_prod_drive_limpio:
-                                    resultados_validacion.append("🟡 Código no extraído")
+                                elif not cod_prod_word_limpio:
+                                    resultados_validacion.append("🟡 Código no extraído en Word")
                                     logs_diagnostico.append(
-                                        f"⚠️ Fila {i} (MP {cod_word_mp_limpio}): No se pudo aislar el código antes del guion (-). "
-                                        f"Word extrajo: '{cod_prod_word_limpio}', Drive extrajo: '{cod_prod_drive_limpio}'."
+                                        f"⚠️ Fila {i} (MP {cod_word_mp_limpio}): No se pudo aislar el código en Word desde '{texto_producto_word}'."
                                     )
                                 else:
-                                    resultados_validacion.append("🔴 Diferente Producto")
+                                    # ¡AQUÍ NACE LA ALERTA!
+                                    resultados_validacion.append("🔴 Diferente Producto (Alerta)")
                                     logs_diagnostico.append(
-                                        f"❌ Fila {i} (MP {cod_word_mp_limpio}): Desajuste detectado. "
-                                        f"El Word indica producto '{cod_prod_word_limpio}' y en Drive está registrado el producto '{cod_prod_drive_limpio}'."
+                                        f"❌ Fila {i} (MP {cod_word_mp_limpio}): ALERTA DISPARADA. "
+                                        f"El Word indica el Producto '{cod_prod_word_limpio}', pero en el PI en Línea para esa MP "
+                                        f"solo se registran los productos: {lista_codigos_pi}."
                                     )
                             else:
-                                resultados_validacion.append("🔴 MP no existe en Drive")
-                                indicadores_drive_encontrados.append("NO EXISTE EN DRIVE")
+                                resultados_validacion.append("🔴 MP no existe en PI en Línea")
+                                indicadores_drive_encontrados.append("NO EXISTE EN PI")
                                 codigos_prod_drive.append("N/A")
-                                logs_diagnostico.append(f"❌ Fila {i}: La Meta de Producto '{cod_word_mp_limpio}' no se encuentra en la pestaña MP del Drive.")
+                                logs_diagnostico.append(f"❌ Fila {i}: La Meta de Producto '{cod_word_mp_limpio}' no existe en el Plan Indicativo.")
                     
-                    # Inyección de columnas al DataFrame
-                    df_word["Indicador en Drive"] = indicadores_drive_encontrados
+                    # Inyección de resultados
+                    df_word["Indicador en PI"] = indicadores_drive_encontrados
                     df_word["Cod Producto Word"] = codigos_prod_word
-                    df_word["Cod Producto Drive"] = codigos_prod_drive
+                    df_word["Cod Producto PI en Línea"] = codigos_prod_drive
                     df_word["Resultado Validación"] = resultados_validacion
                     
                     # Consola de trazabilidad
-                    st.warning("🛠️ **Consola de Auditoría: Comparación antes del guion (-)**")
-                    with st.expander("👁️ Ver trazabilidad del cruce de códigos de producto", expanded=True):
+                    st.warning("🛠️ **Consola de Auditoría de Alertas:**")
+                    with st.expander("👁️ Ver trazabilidad del cruce con el PI en Línea", expanded=True):
                         st.code("\n".join(logs_diagnostico), language="text")
                     
-                    # Formato semáforo
                     def color_semaforo(val):
                         if "🟢" in str(val):
                             return "background-color: #d4edda; color: #155724; font-weight: bold;"
@@ -387,32 +387,31 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         else:
                             return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
                     
-                    # Renderizado final
                     df_final_render = df_word[[
                         "Código MP", 
                         "Cod Producto Word",
                         "Producto CV - MGA", 
-                        "Cod Producto Drive",
-                        "Indicador en Drive", 
+                        "Cod Producto PI en Línea",
+                        "Indicador en PI", 
                         "Resultado Validación"
                     ]].copy()
                     
-                    st.markdown("##### 📈 Reporte de Validación de Producto (Word vs. Drive)")
+                    st.markdown("##### 📈 Reporte de Alertas: Producto Word vs. Plan Indicativo en Línea")
                     st.dataframe(
                         df_final_render.style.map(color_semaforo, subset=["Resultado Validación"]),
                         use_container_width=True
                     )
                     
-                    conteo_errores = df_word["Resultado Validación"].str.contains("🔴").sum()
-                    if conteo_errores > 0:
-                        st.error(f"⚠️ Se detectaron {conteo_errores} disconformidades en el cruce de códigos de producto.")
+                    conteo_alertas = df_word["Resultado Validación"].str.contains("🔴").sum()
+                    if conteo_alertas > 0:
+                        st.error(f"🚨 ¡Atención! Se han activado {conteo_alertas} alertas por discrepancia entre el producto del Word y el PI en Línea.")
                     else:
-                        st.success("🎉 ¡Validación exitosa! Todos los códigos de producto coinciden correctamente.")
+                        st.success("🎉 ¡Validación limpia! Todos los productos del Word coinciden con el PI en Línea.")
                         
                 else:
-                    st.error("🚨 No se pudieron mapear las columnas 'Código MP' e 'Indicador de Producto' en la pestaña MP del Drive.")
+                    st.error("🚨 No se encontraron las columnas esperadas en la pestaña 'MP' del PI en Línea.")
                     
             except Exception as e:
-                st.error(f"❌ Error en el procesamiento del cruce: {e}")
+                st.error(f"❌ Error al ejecutar la auditoría: {e}")
 else:
-    st.info("💡 Por favor, primero carga un archivo Word en la sección superior para habilitar la auditoría.")
+    st.info("💡 Por favor, carga un archivo Word en la sección superior para procesar la auditoría.")
