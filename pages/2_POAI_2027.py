@@ -526,7 +526,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
     else:
         st.info("📌 Carga el archivo **Z023 Consolidado** para ejecutar el análisis de proyectos 2026.")
     
-    # RENDERIZADO PERSISTENTE: Con scrollbar horizontal garantizado por ancho de columnas
+    # RENDERIZADO PERSISTENTE: Con ajuste de línea (Word Wrap) y scroll nativo
     if "df_z023_resultado" in st.session_state and not st.session_state["df_z023_resultado"].empty:
         st.markdown("##### 📊 Consolidado de Proyectos Aportantes a Metas de Producto (2026)")
         
@@ -537,17 +537,22 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
             "Detalle Proyectos Z023"
         ]].copy()
         
-        # Uso de column_config para fijar anchos y forzar el scroll horizontal
-        st.dataframe(
+        # Usamos st.data_editor de solo lectura con line_break=True
+        st.data_editor(
             df_resumen_render,
             use_container_width=True,
+            disabled=True,  # Hace que funcione exactamente como una tabla de consulta (sin edición)
+            hide_index=True,
             column_config={
                 "Código MP": st.column_config.TextColumn("Código MP", width="small"),
                 "Cant. Proyectos (2026)": st.column_config.NumberColumn("Cant. Proyectos", width="small"),
                 "Códigos PPM": st.column_config.TextColumn("Códigos PPM", width="medium"),
-                "Detalle Proyectos Z023": st.column_config.TextColumn("Detalle Proyectos Z023", width="large") # Forzado a ancho amplio
-            },
-            hide_index=True
+                "Detalle Proyectos Z023": st.column_config.TextColumn(
+                    "Detalle Proyectos Z023",
+                    width="large",
+                    line_break=True  # 👈 Permite ver textos multinivel/multilínea completos
+                )
+            }
         )
         
         sin_proyectos = (st.session_state["df_z023_resultado"]["Cant. Proyectos (2026)"] == 0).sum()
