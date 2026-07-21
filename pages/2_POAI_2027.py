@@ -238,7 +238,7 @@ if archivo_word is not None:
             st.error(f"🚨 Error en el procesamiento del documento: {e}")
 
 # ============================================================
-# COMPONENTE DE AUDITORÍA DE CONSISTENCIA: WORD VS. PLAN INDICATIVO
+# COMPONENTE DE AUDITORÍA: WORD ("Indicador de Producto CV - MGA") VS. PI
 # ============================================================
 
 st.markdown("---")
@@ -250,16 +250,16 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
     df_word = st.session_state["df_indicadores_estandar"].copy()
     
     if st.button("🚀 Ejecutar Cruce y Comparación con PI"):
-        with st.spinner("⏳ Conectando con Plan Indicativo y comparando códigos de producto..."):
+        with st.spinner("⏳ Conectando con Plan Indicativo y comparando indicadores de producto..."):
             try:
-                # 1. Leer el Plan Indicativo en la pestaña "MP" (Encabezados en la fila 2)
+                # 1. Leer el Plan Indicativo en la pestaña "MP" (Encabezados en fila 2)
                 df_drive = pd.read_excel(URL_DRIVE_EXCEL, sheet_name="MP", header=1, engine="openpyxl")
                 
                 columnas_reales = list(df_drive.columns)
                 col_codigo_mp = None
                 col_indicador_drive = None
                 
-                # Mapeo estricto de columnas en el Excel en Línea
+                # Mapeo de columnas en la pestaña MP del Drive
                 for col in columnas_reales:
                     col_limpia = str(col).strip().lower().replace("á","a").replace("é","e").replace("í","i").replace("ó","o").replace("ú","u")
                     if "codigo mp" in col_limpia:
@@ -269,24 +269,24 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                 
                 if col_codigo_mp and col_indicador_drive:
                     
-                    # Función para extraer únicamente la secuencia numérica (ej: los 9 dígitos antes del guion)
+                    # Función para extraer únicamente la secuencia numérica (los dígitos antes del guion o el código)
                     def extraer_codigo_numerico(texto):
                         if pd.isna(texto) or str(texto).strip().lower() == "nan":
                             return ""
                         
                         texto_str = str(texto).strip()
                         
-                        # Si tiene guion (-), tomamos la primera parte
+                        # Si tiene guion (-), aislamos la primera parte
                         if "-" in texto_str:
                             texto_str = texto_str.split('-')[0].strip()
                         
-                        # Extraer únicamente los dígitos numéricos
+                        # Extraer solo los dígitos numéricos
                         digitos = re.sub(r'\D', '', texto_str)
                         return digitos
 
-                    # Mapear el Plan Indicativo usando la MP como LLAVE
-                    dict_pi_indicadores = {}  # Texto completo en PI
-                    dict_pi_codigos_prod = {} # Código de producto en PI
+                    # Indexar el Plan Indicativo por la LLAVE MP
+                    dict_pi_indicadores = {}
+                    dict_pi_codigos_prod = {}
                     
                     for _, fila in df_drive.iterrows():
                         mp_raw = fila[col_codigo_mp]
@@ -299,7 +299,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                             dict_pi_indicadores[mp_llave] = str(ind_pi_raw).strip()
                             dict_pi_codigos_prod[mp_llave] = cod_prod_pi
 
-                    # Listas de control y trazabilidad
+                    # Control y trazabilidad de resultados
                     logs_diagnostico = []
                     resultados_validacion = []
                     textos_pi_encontrados = []
@@ -311,9 +311,9 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         mp_word_raw = fila_word.get("Código MP", "")
                         mp_llave_word = extraer_codigo_numerico(mp_word_raw)
                         
-                        # Extraer directamente de la columna 'Producto CV - MGA' del Word
-                        prod_word_raw = fila_word.get("Producto CV - MGA", "")
-                        cod_prod_word = extraer_codigo_numerico(prod_word_raw)
+                        # CAMBIO SOLICITADO: Lectura desde "Indicador de Producto CV - MGA"
+                        ind_word_raw = fila_word.get("Indicador de Producto CV - MGA", "")
+                        cod_prod_word = extraer_codigo_numerico(ind_word_raw)
                         
                         codigos_word_extraidos.append(cod_prod_word if cod_prod_word else "No detectado")
                         
@@ -321,9 +321,9 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                             resultados_validacion.append("🔴 MP ausente en Word")
                             textos_pi_encontrados.append("N/A")
                             codigos_pi_extraidos.append("N/A")
-                            logs_diagnostico.append(f"Fila {i}: Falta la llave 'Código MP' en el Word.")
+                            logs_diagnostico.append(f"Fila {i}: Falta el 'Código MP' en el Word.")
                         else:
-                            # 3. BUSCAR EN EL PLAN INDICATIVO USANDO LA LLAVE MP
+                            # 3. BÚSQUEDA EN PI CON LA LLAVE MP
                             if mp_llave_word in dict_pi_codigos_prod:
                                 cod_prod_pi = dict_pi_codigos_prod[mp_llave_word]
                                 texto_pi = dict_pi_indicadores[mp_llave_word]
@@ -331,7 +331,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                                 codigos_pi_extraidos.append(cod_prod_pi if cod_prod_pi else "No detectado")
                                 textos_pi_encontrados.append(texto_pi)
                                 
-                                # 4. COMPARACIÓN ENTRE CÓDIGOS DE PRODUCTO
+                                # 4. COMPARACIÓN DE CÓDIGOS EXTRAÍDOS
                                 if cod_prod_word and cod_prod_pi and cod_prod_word == cod_prod_pi:
                                     resultados_validacion.append("🟢 Corresponde al PI")
                                     logs_diagnostico.append(
@@ -339,32 +339,32 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                                         f"Word: '{cod_prod_word}' == PI: '{cod_prod_pi}'."
                                     )
                                 else:
-                                    resultados_validacion.append("🔴 Código de Producto no coincide")
+                                    resultados_validacion.append("🔴 Código no coincide")
                                     logs_diagnostico.append(
                                         f"❌ Fila {i} (Llave MP: {mp_llave_word}): DISCREPANCIA DETECTADA. "
-                                        f"Word registra producto '{cod_prod_word}' (de '{prod_word_raw}'), "
-                                        f"pero el Plan Indicativo tiene asignado '{cod_prod_pi}'."
+                                        f"Word registra código '{cod_prod_word}' en 'Indicador de Producto CV - MGA', "
+                                        f"pero el PI tiene asignado el código '{cod_prod_pi}'."
                                     )
                             else:
                                 resultados_validacion.append("🔴 MP no existe en PI")
                                 textos_pi_encontrados.append("NO EXISTE META EN PI")
                                 codigos_pi_extraidos.append("N/A")
                                 logs_diagnostico.append(
-                                    f"❌ Fila {i}: La llave MP '{mp_llave_word}' (Word) no fue encontrada en la pestaña MP del Plan Indicativo."
+                                    f"❌ Fila {i}: La llave MP '{mp_llave_word}' (Word) no existe en la pestaña MP del PI."
                                 )
                     
-                    # Cargar resultados en el DataFrame
-                    df_word["Cod Producto Word"] = codigos_word_extraidos
-                    df_word["Cod Producto PI"] = codigos_pi_extraidos
+                    # Inyección al DataFrame
+                    df_word["Cod Indicador Word"] = codigos_word_extraidos
+                    df_word["Cod Indicador PI"] = codigos_pi_extraidos
                     df_word["Indicador en PI"] = textos_pi_encontrados
                     df_word["Resultado Validación"] = resultados_validacion
                     
-                    # Consola de trazabilidad explicativa
-                    st.warning("🛠️ **Consola de Diagnóstico: Comparación Producto (Word) vs. Producto (PI)**")
+                    # Consola de diagnóstico
+                    st.warning("🛠️ **Consola de Diagnóstico: Comparación Indicador de Producto (Word) vs. PI**")
                     with st.expander("👁️ Ver trazabilidad del cruce con el Plan Indicativo", expanded=True):
                         st.code("\n".join(logs_diagnostico), language="text")
                     
-                    # Estilizado de la tabla con formato semáforo
+                    # Formato semáforo
                     def color_semaforo(val):
                         if "🟢" in str(val):
                             return "background-color: #d4edda; color: #155724; font-weight: bold;"
@@ -373,14 +373,14 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     
                     df_final_render = df_word[[
                         "Código MP", 
-                        "Cod Producto Word",
-                        "Producto CV - MGA", 
-                        "Cod Producto PI",
+                        "Cod Indicador Word",
+                        "Indicador de Producto CV - MGA", 
+                        "Cod Indicador PI",
                         "Indicador en PI", 
                         "Resultado Validación"
                     ]].copy()
                     
-                    st.markdown("##### 📈 Reporte de Inconsistencias: Producto Word vs. Plan Indicativo")
+                    st.markdown("##### 📈 Reporte de Inconsistencias: Indicador de Producto Word vs. Plan Indicativo")
                     st.dataframe(
                         df_final_render.style.map(color_semaforo, subset=["Resultado Validación"]),
                         use_container_width=True
@@ -390,7 +390,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     if conteo_alertas > 0:
                         st.error(f"⚠️ Se detectaron {conteo_alertas} alertas de inconsistencia entre el Word y el Plan Indicativo.")
                     else:
-                        st.success("🎉 ¡Validación correcta! Todos los códigos de producto coinciden con el Plan Indicativo para cada MP.")
+                        st.success("🎉 ¡Validación correcta! Todos los indicadores corresponden al Plan Indicativo para cada MP.")
                         
                 else:
                     st.error("🚨 No se encontraron las columnas necesarias ('Código MP' e 'Indicador de Producto') en la pestaña MP del Plan Indicativo.")
