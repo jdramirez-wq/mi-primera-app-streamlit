@@ -399,3 +399,146 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                 st.error(f"❌ Error al ejecutar la validación con el Plan Indicativo: {e}")
 else:
     st.info("💡 Primero carga el archivo Word para habilitar el cruce contra el Plan Indicativo.")
+
+
+
+# ============================================================
+# MÓDULO DE VERIFICACIÓN Z023: PROYECTOS VIGENCIA 2026
+# ============================================================
+
+st.markdown("---")
+st.subheader("📦 Auditoría Z023: Proyectos Asociados a la Meta de Producto (Vigencia 2026)")
+
+# Requisito: Subir el archivo Z023 si no está guardado previamente
+uploaded_z023 = st.file_uploader(
+    "Carga el archivo Z023 Consolidado (.xlsx)", 
+    type=["xlsx", "xls"], 
+    key="z023_uploader"
+)
+
+if "df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty:
+    df_word = st.session_state["df_indicadores_estandar"].copy()
+    
+    if uploaded_z023 is not None:
+        if st.button("🚀 Analizar Proyectos Aportantes (Z023 - 2026)"):
+            with st.spinner("⏳ Procesando Hoja1 de Z023, filtrando vigencia 2026 y agrupando proyectos..."):
+                try:
+                    # 1. Cargar específicamente la "Hoja1" requerida
+                    df_z023 = pd.read_excel(uploaded_z023, sheet_name="Hoja1", engine="openpyxl")
+                    
+                    # Limpieza flexible de nombres de columnas
+                    columnas_z023 = {str(c).strip(): c for c in df_z023.columns}
+                    
+                    # Función auxiliar para encontrar columnas clave
+                    def buscar_columna(patron, diccionario_cols):
+                        for c_limpia, c_real in diccionario_cols.items():
+                            if patron.lower() in c_limpia.lower():
+                                return c_real
+                        return None
+
+                    col_vigencia = buscar_columna("Vigencia", columnas_z023)
+                    col_cod_mp = buscar_columna("Codigo Meta Producto", columnas_z023) or buscar_columna("Meta Producto", columnas_z023)
+                    col_ppm_proj = buscar_columna("PPM: Proyecto", columnas_z023) or buscar_columna("Proyecto", columnas_z023)
+                    col_desc_proj = buscar_columna("Descripción PROYECTO", columnas_z023) or buscar_columna("Descripcion", columnas_z023)
+                    col_bpin = buscar_columna("Cod.BPIN DNP", columnas_z023) or buscar_columna("BPIN", columnas_z023)
+
+                    if not (col_vigencia and col_cod_mp and col_ppm_proj and col_desc_proj):
+                        st.error("🚨 No se encontraron todas las columnas requeridas en la 'Hoja1' del Z023.")
+                        st.info(f"Columnas detectadas en Hoja1: {list(df_z023.columns)}")
+                    else:
+                        # 2. Filtrar únicamente por la Vigencia 2026
+                        df_z023_2026 = df_z023[df_z023[col_vigencia].astype(str).str.contains("2026", na=False)].copy()
+                        
+                        if df_z023_2026.empty:
+                            st.warning("⚠️ El archivo Z023 no contiene registros para la vigencia 2026 en la 'Hoja1'.")
+                        else:
+                            # Helper para aislar los dígitos de la MP (llave de cruce)
+                            def extraer_codigo_numerico(texto):
+                                if pd.isna(texto) or str(texto).strip().lower() == "nan":
+                                    return ""
+                                texto_str = str(texto).strip()
+                                if "-" in texto_str:
+                                    texto_str = texto_str.split('-')[0].strip()
+                                return re.sub(r'\D', '', texto_str)
+
+                            # Agrupar Z023 por la MP para consolidar sus proyectos únicos
+                            dict_z023_proyectos = {}
+                            
+                            for _, fila in df_z023_2026.iterrows():
+                                mp_key = extraer_codigo_numerico(fila[col_cod_mp])
+                                if not mp_key:
+                                    continue
+                                
+                                ppm = str(fila[col_ppm_proj]).strip() if pd.notna(fila[col_ppm_proj]) else "S/C"
+                                desc = str(fila[col_desc_proj]).strip() if pd.notna(fila[col_desc_proj]) else "Sin Descripción"
+                                bpin = str(fila[col_bpin]).strip() if (col_bpin and pd.notna(fila[col_bpin])) else "No registra"
+
+                                if mp_key not in dict_z023_proyectos:
+                                    dict_z023_proyectos[mp_key] = {}
+
+                                # Usamos el código PPM como clave única para no duplicar por las múltiples actividades
+                                dict_z023_proyectos[mp_key][ppm] = {
+                                    "PPM": ppm,
+                                    "Descripcion": desc,
+                                    "BPIN": bpin
+                                }
+
+                            # 3. Cruzar con las Metas de Producto del Word
+                            conteo_proyectos = []
+                            listado_codigos_ppm = []
+                            resumen_detallado_proyectos = []
+                            
+                            for i, fila_word in df_word.iterrows():
+                                mp_word_raw = fila_word.get("Código MP", "")
+                                mp_key_word = extraer_codigo_numerico(mp_word_raw)
+                                
+                                if mp_key_word in dict_z023_proyectos:
+                                    proyectos_map = dict_z023_proyectos[mp_key_word]
+                                    cant = len(proyectos_map)
+                                    conteo_proyectos.append(cant)
+                                    
+                                    codigos_ppm = list(proyectos_map.keys())
+                                    listado_codigos_ppm.append(", ".join(codigos_ppm))
+                                    
+                                    # Generar texto legible con el detalle
+                                    detalles = []
+                                    for p in proyectos_map.values():
+                                        bpin_str = f" (BPIN: {p['BPIN']})" if p['BPIN'] not in ["No registra", "nan", ""] else ""
+                                        detalles.append(f"• [{p['PPM']}] {p['Descripcion']}{bpin_str}")
+                                    
+                                    resumen_detallado_proyectos.append("\n".join(detalles))
+                                else:
+                                    conteo_proyectos.append(0)
+                                    listado_codigos_ppm.append("Sin proyectos 2026")
+                                    resumen_detallado_proyectos.append("🔴 No se registraron proyectos asociados en la vigencia 2026 (Z023).")
+
+                            # Inyectar resultados al DataFrame
+                            df_word["Cant. Proyectos (2026)"] = conteo_proyectos
+                            df_word["Códigos PPM"] = listado_codigos_ppm
+                            df_word["Detalle Proyectos Z023"] = resumen_detallado_proyectos
+                            
+                            # Renderizar tabla consolidada
+                            st.markdown("##### 📊 Consolidado de Proyectos Aportantes a Metas de Producto (2026)")
+                            
+                            df_resumen_render = df_word[[
+                                "Código MP", 
+                                "Cant. Proyectos (2026)", 
+                                "Códigos PPM", 
+                                "Detalle Proyectos Z023"
+                            ]].copy()
+                            
+                            st.dataframe(df_resumen_render, use_container_width=True)
+                            
+                            # Alertas rápidas
+                            sin_proyectos = (df_word["Cant. Proyectos (2026)"] == 0).sum()
+                            if sin_proyectos > 0:
+                                st.warning(f"⚠️ Hay {sin_proyectos} Metas de Producto del Word que NO presentan proyectos en la vigencia 2026 del Z023.")
+                            else:
+                                st.success("🎉 Todas las Metas de Producto del Word cuentan con al menos un proyecto asignado en la vigencia 2026.")
+
+                except Exception as e:
+                    st.error(f"❌ Error al procesar la 'Hoja1' del archivo Z023: {e}")
+    else:
+        st.info("📌 Carga el archivo **Z023 Consolidado** para ejecutar el análisis de proyectos 2026.")
+else:
+    st.info("💡 Carga el archivo Word en la sección principal para habilitar el cruce con Z023.")
