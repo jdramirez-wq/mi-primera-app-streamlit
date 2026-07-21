@@ -409,12 +409,16 @@ else:
 st.markdown("---")
 st.subheader("📦 Auditoría Z023: Proyectos Asociados a la Meta de Producto (Vigencia 2026)")
 
-# Requisito: Subir el archivo Z023 si no está guardado previamente
+# Permitir archivos .xlsm (habilitados para macros), .xlsx y .xls
 uploaded_z023 = st.file_uploader(
-    "Carga el archivo Z023 Consolidado (.xlsx)", 
-    type=["xlsx", "xls"], 
+    "Carga el archivo Z023 Consolidado (.xlsm o .xlsx)", 
+    type=["xlsm", "xlsx", "xls"], 
     key="z023_uploader"
 )
+
+if uploaded_z023 is not None:
+    # openpyxl lee los datos de la Hoja1 de archivos .xlsm ignorando el código VBA de las macros
+    df_z023 = pd.read_excel(uploaded_z023, sheet_name="Hoja1", engine="openpyxl")
 
 if "df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty:
     df_word = st.session_state["df_indicadores_estandar"].copy()
