@@ -401,13 +401,7 @@ else:
     st.info("💡 Primero carga el archivo Word para habilitar el cruce contra el Plan Indicativo.")
 
 
-import streamlit as st
-import pandas as pd
-import re
 
-import re
-import pandas as pd
-import streamlit as st
 
 # ============================================================
 # MÓDULO DE VERIFICACIÓN Z023: PROYECTOS VIGENCIA 2026
