@@ -526,7 +526,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
     else:
         st.info("📌 Carga el archivo **Z023 Consolidado** para ejecutar el análisis de proyectos 2026.")
     
-    # RENDERIZADO PERSISTENTE: Se dibuja si existe en session_state, evitando borrados en reruns
+    # RENDERIZADO PERSISTENTE: Con scrollbar horizontal garantizado por ancho de columnas
     if "df_z023_resultado" in st.session_state and not st.session_state["df_z023_resultado"].empty:
         st.markdown("##### 📊 Consolidado de Proyectos Aportantes a Metas de Producto (2026)")
         
@@ -537,13 +537,23 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
             "Detalle Proyectos Z023"
         ]].copy()
         
-        st.dataframe(df_resumen_render, use_container_width=True)
+        # Uso de column_config para fijar anchos y forzar el scroll horizontal
+        st.dataframe(
+            df_resumen_render,
+            use_container_width=True,
+            column_config={
+                "Código MP": st.column_config.TextColumn("Código MP", width="small"),
+                "Cant. Proyectos (2026)": st.column_config.NumberColumn("Cant. Proyectos", width="small"),
+                "Códigos PPM": st.column_config.TextColumn("Códigos PPM", width="medium"),
+                "Detalle Proyectos Z023": st.column_config.TextColumn("Detalle Proyectos Z023", width="large") # Forzado a ancho amplio
+            },
+            hide_index=True
+        )
         
         sin_proyectos = (st.session_state["df_z023_resultado"]["Cant. Proyectos (2026)"] == 0).sum()
         if sin_proyectos > 0:
             st.warning(f"⚠️ Hay {sin_proyectos} Metas de Producto del Word que NO presentan proyectos en la vigencia 2026 del Z023.")
         else:
             st.success("🎉 Todas las Metas de Producto del Word cuentan con al menos un proyecto asignado en la vigencia 2026.")
-
 else:
     st.info("💡 Carga el archivo Word en la sección principal para habilitar el cruce con Z023.")
