@@ -1,19 +1,44 @@
 import streamlit as st
-import docx  # Requiere python-docx en requirements.txt
+import docx
 import re
 import pandas as pd
 
+# Configuración inicial de la página
 st.set_page_config(
     page_title="Revisión de Cadenas de Valor",
     page_icon="📐",
     layout="wide"
 )
 
+URL_DRIVE_EXCEL = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtKgIV3ch3cQ-JbcAOTjQD8ss/export?format=xlsx"
+
+# ============================================================
+# FUNCIONES AUXILIARES Y DE CACHÉ
+# ============================================================
+
+def extraer_codigo_numerico(texto, prefijo=""):
+    """
+    Aísla la secuencia numérica de un texto (por ejemplo, 'MP24 - Nombre' -> '24').
+    Si se pasa un prefijo (ej. 'V'), devuelve 'V24'.
+    """
+    if pd.isna(texto) or str(texto).strip().lower() == "nan":
+        return ""
+    texto_str = str(texto).strip()
+    if "-" in texto_str:
+        texto_str = texto_str.split('-')[0].strip()
+    digitos = re.sub(r'\D', '', texto_str)
+    return f"{prefijo}{digitos}" if digitos else ""
+
+@st.cache_data(show_spinner=False)
+def leer_plan_indicativo_drive(url_excel):
+    """Carga en caché la pestaña 'MP' del Plan Indicativo desde Drive."""
+    return pd.read_excel(url_excel, sheet_name="MP", header=1, engine="openpyxl")
+
 # ============================================================
 # FUNCIONES EXTRACTORAS Y PARSERS INSTITUCIONALES
 # ============================================================
 
-def extraer_texto_y_tablas_docx(file_buffer):
+def extraer_texto_y_tablas_docx(file_buffer) -> str:
     """Lee el archivo .docx y lo convierte en texto plano estructurado por bloques."""
     doc = docx.Document(file_buffer)
     contenido_total = []
@@ -33,13 +58,14 @@ def extraer_texto_y_tablas_docx(file_buffer):
                 
     return "\n".join(contenido_total)
 
-def extraer_encabezado_estandar(texto_bruto):
+def extraer_encabezado_estandar(texto_bruto: str) -> dict:
     """Extrae las variables de identificación del encabezado."""
     metadatos = {
         "dependencia": "No detectada", "fecha": "No detectada", 
         "nombre_proyecto_encabezado": "No detectado", "id_mga": "No detectado", 
         "bpin": "No detectado", "codigo_pi": "No detectado"
     }
+    
     match_fecha = re.search(r"Fecha:\s*([\d/:-]+)", texto_bruto, re.IGNORECASE)
     if match_fecha: metadatos["fecha"] = match_fecha.group(1)
     
@@ -56,7 +82,7 @@ def extraer_encabezado_estandar(texto_bruto):
     
     return metadatos
 
-def procesar_tablas_estandar(texto_bruto):
+def procesar_tablas_estandar(texto_bruto: str):
     """Segmenta los bloques y procesa las 5 tablas de forma estricta según las columnas indicadas."""
     bloques = [b.strip() for b in texto_bruto.split("#") if b.strip()]
     
@@ -65,13 +91,14 @@ def procesar_tablas_estandar(texto_bruto):
     recurso_total_proyecto = "$0"
     nombre_proyecto_tabla = "No detectado"
     
+    def descomponer_linea(l):
+        return [p.strip() for p in l.split("|")]
+
     for bloque in bloques:
         lineas = bloque.split("\n")
-        if not lineas: continue
+        if not lineas: 
+            continue
         encabezado_tabla = lineas[0].lower()
-        
-        def descomponer_linea(l):
-            return [p.strip() for p in l.split("|")]
         
         # --- TABLA 1: DATOS BÁSICOS Y OBJETIVOS ---
         if "no.cv" in encabezado_tabla and "objetivo general proyecto" in encabezado_tabla:
@@ -79,7 +106,8 @@ def procesar_tablas_estandar(texto_bruto):
                 partes = descomponer_linea(l)
                 if partes and partes[0].isdigit():
                     idx = int(partes[0])
-                    if idx not in dicc_indicadores: dicc_indicadores[idx] = {}
+                    if idx not in dicc_indicadores: 
+                        dicc_indicadores[idx] = {}
                     dicc_indicadores[idx]["No.CV"] = partes[1] if len(partes) > 1 else ""
                     dicc_indicadores[idx]["Dependencia"] = partes[2] if len(partes) > 2 else ""
                     dicc_indicadores[idx]["Nombre Proyecto"] = partes[3] if len(partes) > 3 else ""
@@ -87,8 +115,7 @@ def procesar_tablas_estandar(texto_bruto):
                     dicc_indicadores[idx]["Objective General Proyecto"] = partes[5] if len(partes) > 5 else ""
                     dicc_indicadores[idx]["Objetivo Específico"] = partes[6] if len(partes) > 6 else ""
                     
-                    # Extraemos el nombre del proyecto de la primera fila válida encontrada
-                    if nombre_proyecto_tabla == "No detectado" and partes[3]:
+                    if nombre_proyecto_tabla == "No detectado" and len(partes) > 3 and partes[3]:
                         nombre_proyecto_tabla = partes[3]
 
         # --- TABLA 2: ALINEACIÓN PDD ---
@@ -105,7 +132,7 @@ def procesar_tablas_estandar(texto_bruto):
                         dicc_indicadores[idx]["Meta de Resultado"] = partes[5] if len(partes) > 5 else ""
                         dicc_indicadores[idx]["Subprograma Plan"] = partes[6] if len(partes) > 6 else ""
 
-        # --- TABLA 3: PROGRAMACIÓN PLURIANUAL + EXTRACCIÓN CÓDIGO MP ---
+        # --- TABLA 3: PROGRAMACIÓN PLURIANUAL + CÓDIGO MP ---
         elif "meta producto plan" in encabezado_tabla and "meta total mga" in encabezado_tabla:
             for l in lineas[1:]:
                 partes = descomponer_linea(l)
@@ -115,7 +142,6 @@ def procesar_tablas_estandar(texto_bruto):
                         meta_producto_texto = partes[1] if len(partes) > 1 else ""
                         dicc_indicadores[idx]["Meta Producto Plan"] = meta_producto_texto
                         
-                        # EXTRACCIÓN ADICIONAL: Aislar el Código MP usando Expresiones Regulares
                         match_mp = re.search(r"(MP\d+)", meta_producto_texto)
                         dicc_indicadores[idx]["Código MP"] = match_mp.group(1) if match_mp else "Sin Código"
                         
@@ -146,7 +172,7 @@ def procesar_tablas_estandar(texto_bruto):
                         dicc_indicadores[idx]["Tipo prod."] = partes[4] if len(partes) > 4 else ""
                         dicc_indicadores[idx]["Tipo prod2"] = partes[5] if len(partes) > 5 else ""
 
-        # --- TABLA 5: POAI 2027 Y FILA DE TOTALES ---
+        # --- TABLA 5: POAI 2027 Y TOTALES ---
         elif "cod. meta de producto" in encabezado_tabla or "actividad del proyecto" in encabezado_tabla:
             columnas = [c.strip().lower() for c in lineas[0].split("|") if c.strip()]
             pos_mp = next((i for i, c in enumerate(columnas) if "cod. meta" in c or "producto" in c), 0)
@@ -175,76 +201,74 @@ def procesar_tablas_estandar(texto_bruto):
 
     df_indicadores = pd.DataFrame.from_dict(dicc_indicadores, orient="index")
     
-    # Reorganizar columnas para dejar el "Código MP" en una ubicación visible e importante
     if not df_indicadores.empty and "Código MP" in df_indicadores.columns:
         cols = list(df_indicadores.columns)
         cols.insert(0, cols.pop(cols.index("Código MP")))
         df_indicadores = df_indicadores[cols]
         
     df_poai = pd.DataFrame(lista_actividades_poai)
-    
     return df_indicadores, df_poai, recurso_total_proyecto, nombre_proyecto_tabla
 
+
 # ============================================================
-# INTERFAZ DE USUARIO DE STREAMLIT
+# INTERFAZ DE USUARIO: CARGA Y PROCESAMIENTO INICIAL
 # ============================================================
 
 st.title("📐 Control Previo y Revisión de Cadenas de Valor")
 st.write("Carga el archivo Word técnico para procesar de forma estricta los campos del Plan de Desarrollo.")
-
 st.markdown("---")
 
 archivo_word = st.file_uploader("📂 Sube aquí el formato de Cadena de Valor en Word (.docx)", type=["docx"])
 
 if archivo_word is not None:
-    with st.spinner("⏳ Mapeando columnas y consolidando matrices..."):
-        try:
-            texto_extraido = extraer_texto_y_tablas_docx(archivo_word)
-            st.session_state["texto_word_extraido"] = texto_extraido
-            
-            metadatos = extraer_encabezado_estandar(texto_extraido)
-            df_ind, df_poai, total_presupuesto, proyecto_nombre_tabla = procesar_tablas_estandar(texto_extraido)
-            
-            st.success("✅ ¡Archivo procesado con éxito!")
-            
-            # Bloque 1: Datos de identificación usando el nombre extraído de la columna del proyecto
-            st.markdown("### 📌 Identificación del Proyecto")
-            c1, c2, c3 = st.columns(3)
-            c1.text_input("Proyecto de Inversión (Extraído de la Tabla):", value=proyecto_nombre_tabla, disabled=True)
-            c2.text_input("Código de Proyecto (PS-SAP):", value=metadatos["codigo_pi"], disabled=True)
-            c3.text_input("Código BPIN:", value=metadatos["bpin"], disabled=True)
-            
-            # Bloque 2: Matriz Unificada de Indicadores con la nueva columna Código MP posicionada al inicio
-            st.markdown("### 📊 Matriz Completa de Indicadores y Objetivos (Tablas 1-4)")
-            if not df_ind.empty:
-                st.dataframe(df_ind, use_container_width=True)
-            else:
-                st.warning("No se pudo estructurar la matriz técnica de indicadores.")
-            
-            # Bloque 3: Plan Operativo Anual de Inversiones (Tabla 5)
-            st.markdown("### 💰 Distribución Presupuestal y Actividades POAI 2027")
-            if not df_poai.empty:
-                st.dataframe(df_poai, use_container_width=True)
-                st.metric(label="💰 TOTAL RECURSOS 2027 – PROYECTO DE INVERSIÓN", value=total_presupuesto)
-            else:
-                st.warning("No se detectaron actividades presupuestales en la Tabla 5.")
+    if "ultimo_archivo_word" not in st.session_state or st.session_state["ultimo_archivo_word"] != archivo_word.name:
+        with st.spinner("⏳ Mapeando columnas y consolidando matrices..."):
+            try:
+                texto_extraido = extraer_texto_y_tablas_docx(archivo_word)
+                st.session_state["texto_word_extraido"] = texto_extraido
                 
-            # Guardado en sesión listo para cruces analíticos
-            st.session_state["df_indicadores_estandar"] = df_ind
-            st.session_state["df_poai_estandar"] = df_poai
-            st.session_state["total_presupuesto_poai"] = total_presupuesto
-            
-        except Exception as e:
-            st.error(f"🚨 Error en el procesamiento del documento: {e}")
+                metadatos = extraer_encabezado_estandar(texto_extraido)
+                df_ind, df_poai, total_presupuesto, proyecto_nombre_tabla = procesar_tablas_estandar(texto_extraido)
+                
+                st.session_state["metadatos"] = metadatos
+                st.session_state["df_indicadores_estandar"] = df_ind
+                st.session_state["df_poai_estandar"] = df_poai
+                st.session_state["total_presupuesto_poai"] = total_presupuesto
+                st.session_state["proyecto_nombre_tabla"] = proyecto_nombre_tabla
+                st.session_state["ultimo_archivo_word"] = archivo_word.name
+                st.success("✅ ¡Archivo procesado y guardado en sesión!")
+            except Exception as e:
+                st.error(f"🚨 Error en el procesamiento del documento: {e}")
+
+# RENDERIZADO DE MATRICES CARGADAS
+if "df_indicadores_estandar" in st.session_state:
+    st.markdown("### 📌 Identificación del Proyecto")
+    c1, c2, c3 = st.columns(3)
+    c1.text_input("Proyecto de Inversión (Extraído de la Tabla):", value=st.session_state.get("proyecto_nombre_tabla", ""), disabled=True)
+    c2.text_input("Código de Proyecto (PS-SAP):", value=st.session_state.get("metadatos", {}).get("codigo_pi", ""), disabled=True)
+    c3.text_input("Código BPIN:", value=st.session_state.get("metadatos", {}).get("bpin", ""), disabled=True)
+    
+    st.markdown("### 📊 Matriz Completa de Indicadores y Objetivos (Tablas 1-4)")
+    df_ind = st.session_state["df_indicadores_estandar"]
+    if not df_ind.empty:
+        st.dataframe(df_ind, use_container_width=True)
+    else:
+        st.warning("No se pudo estructurar la matriz técnica de indicadores.")
+    
+    st.markdown("### 💰 Distribución Presupuestal y Actividades POAI 2027")
+    df_poai = st.session_state["df_poai_estandar"]
+    if not df_poai.empty:
+        st.dataframe(df_poai, use_container_width=True)
+        st.metric(label="💰 TOTAL RECURSOS 2027 – PROYECTO DE INVERSIÓN", value=st.session_state.get("total_presupuesto_poai", "$0"))
+    else:
+        st.warning("No se detectaron actividades presupuestales en la Tabla 5.")
 
 # ============================================================
-# COMPONENTE DE AUDITORÍA: WORD ("Indicador de Producto CV - MGA") VS. PI
+# COMPONENTE DE AUDITORÍA: WORD VS. PLAN INDICATIVO (PI)
 # ============================================================
 
 st.markdown("---")
 st.subheader("🔍 Auditoría de Coherencia: Word vs. Plan Indicativo (PI)")
-
-URL_DRIVE_EXCEL = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtKgIV3ch3cQ-JbcAOTjQD8ss/export?format=xlsx"
 
 if "df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty:
     df_word = st.session_state["df_indicadores_estandar"].copy()
@@ -252,14 +276,12 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
     if st.button("🚀 Ejecutar Cruce y Comparación con PI"):
         with st.spinner("⏳ Conectando con Plan Indicativo y comparando indicadores de producto..."):
             try:
-                # 1. Leer el Plan Indicativo en la pestaña "MP" (Encabezados en fila 2)
-                df_drive = pd.read_excel(URL_DRIVE_EXCEL, sheet_name="MP", header=1, engine="openpyxl")
+                df_drive = leer_plan_indicativo_drive(URL_DRIVE_EXCEL)
                 
                 columnas_reales = list(df_drive.columns)
                 col_codigo_mp = None
                 col_indicador_drive = None
                 
-                # Mapeo de columnas en la pestaña MP del Drive
                 for col in columnas_reales:
                     col_limpia = str(col).strip().lower().replace("á","a").replace("é","e").replace("í","i").replace("ó","o").replace("ú","u")
                     if "codigo mp" in col_limpia:
@@ -268,23 +290,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         col_indicador_drive = col
                 
                 if col_codigo_mp and col_indicador_drive:
-                    
-                    # Función para extraer únicamente la secuencia numérica (los dígitos antes del guion o el código)
-                    def extraer_codigo_numerico(texto):
-                        if pd.isna(texto) or str(texto).strip().lower() == "nan":
-                            return ""
-                        
-                        texto_str = str(texto).strip()
-                        
-                        # Si tiene guion (-), aislamos la primera parte
-                        if "-" in texto_str:
-                            texto_str = texto_str.split('-')[0].strip()
-                        
-                        # Extraer solo los dígitos numéricos
-                        digitos = re.sub(r'\D', '', texto_str)
-                        return digitos
-
-                    # Indexar el Plan Indicativo por la LLAVE MP
                     dict_pi_indicadores = {}
                     dict_pi_codigos_prod = {}
                     
@@ -299,19 +304,16 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                             dict_pi_indicadores[mp_llave] = str(ind_pi_raw).strip()
                             dict_pi_codigos_prod[mp_llave] = cod_prod_pi
 
-                    # Control y trazabilidad de resultados
                     logs_diagnostico = []
                     resultados_validacion = []
                     textos_pi_encontrados = []
                     codigos_word_extraidos = []
                     codigos_pi_extraidos = []
                     
-                    # 2. Iterar sobre las filas extraídas del Word
                     for i, fila_word in df_word.iterrows():
                         mp_word_raw = fila_word.get("Código MP", "")
                         mp_llave_word = extraer_codigo_numerico(mp_word_raw)
                         
-                        # CAMBIO SOLICITADO: Lectura desde "Indicador de Producto CV - MGA"
                         ind_word_raw = fila_word.get("Indicador de Producto CV - MGA", "")
                         cod_prod_word = extraer_codigo_numerico(ind_word_raw)
                         
@@ -323,7 +325,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                             codigos_pi_extraidos.append("N/A")
                             logs_diagnostico.append(f"Fila {i}: Falta el 'Código MP' en el Word.")
                         else:
-                            # 3. BÚSQUEDA EN PI CON LA LLAVE MP
                             if mp_llave_word in dict_pi_codigos_prod:
                                 cod_prod_pi = dict_pi_codigos_prod[mp_llave_word]
                                 texto_pi = dict_pi_indicadores[mp_llave_word]
@@ -331,77 +332,65 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                                 codigos_pi_extraidos.append(cod_prod_pi if cod_prod_pi else "No detectado")
                                 textos_pi_encontrados.append(texto_pi)
                                 
-                                # 4. COMPARACIÓN DE CÓDIGOS EXTRAÍDOS
                                 if cod_prod_word and cod_prod_pi and cod_prod_word == cod_prod_pi:
                                     resultados_validacion.append("🟢 Corresponde al PI")
-                                    logs_diagnostico.append(
-                                        f"✅ Fila {i} (Llave MP: {mp_llave_word}): Coincidencia exacta. "
-                                        f"Word: '{cod_prod_word}' == PI: '{cod_prod_pi}'."
-                                    )
+                                    logs_diagnostico.append(f"✅ Fila {i} (Llave MP: {mp_llave_word}): Coincidencia exacta. Word: '{cod_prod_word}' == PI: '{cod_prod_pi}'.")
                                 else:
                                     resultados_validacion.append("🔴 Código no coincide")
-                                    logs_diagnostico.append(
-                                        f"❌ Fila {i} (Llave MP: {mp_llave_word}): DISCREPANCIA DETECTADA. "
-                                        f"Word registra código '{cod_prod_word}' en 'Indicador de Producto CV - MGA', "
-                                        f"pero el PI tiene asignado el código '{cod_prod_pi}'."
-                                    )
+                                    logs_diagnostico.append(f"❌ Fila {i} (Llave MP: {mp_llave_word}): DISCREPANCIA DETECTADA. Word: '{cod_prod_word}' vs PI: '{cod_prod_pi}'.")
                             else:
                                 resultados_validacion.append("🔴 MP no existe en PI")
                                 textos_pi_encontrados.append("NO EXISTE META EN PI")
                                 codigos_pi_extraidos.append("N/A")
-                                logs_diagnostico.append(
-                                    f"❌ Fila {i}: La llave MP '{mp_llave_word}' (Word) no existe en la pestaña MP del PI."
-                                )
-                    
-                    # Inyección al DataFrame
+                                logs_diagnostico.append(f"❌ Fila {i}: La llave MP '{mp_llave_word}' (Word) no existe en el PI.")
+
                     df_word["Cod Indicador Word"] = codigos_word_extraidos
                     df_word["Cod Indicador PI"] = codigos_pi_extraidos
                     df_word["Indicador en PI"] = textos_pi_encontrados
                     df_word["Resultado Validación"] = resultados_validacion
                     
-                    # Consola de diagnóstico
-                    st.warning("🛠️ **Consola de Diagnóstico: Comparación Indicador de Producto (Word) vs. PI**")
-                    with st.expander("👁️ Ver trazabilidad del cruce con el Plan Indicativo", expanded=True):
-                        st.code("\n".join(logs_diagnostico), language="text")
-                    
-                    # Formato semáforo
-                    def color_semaforo(val):
-                        if "🟢" in str(val):
-                            return "background-color: #d4edda; color: #155724; font-weight: bold;"
-                        else:
-                            return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
-                    
-                    df_final_render = df_word[[
-                        "Código MP", 
-                        "Cod Indicador Word",
-                        "Indicador de Producto CV - MGA", 
-                        "Cod Indicador PI",
-                        "Indicador en PI", 
-                        "Resultado Validación"
-                    ]].copy()
-                    
-                    st.markdown("##### 📈 Reporte de Inconsistencias: Indicador de Producto Word vs. Plan Indicativo")
-                    st.dataframe(
-                        df_final_render.style.map(color_semaforo, subset=["Resultado Validación"]),
-                        use_container_width=True
-                    )
-                    
-                    conteo_alertas = df_word["Resultado Validación"].str.contains("🔴").sum()
-                    if conteo_alertas > 0:
-                        st.error(f"⚠️ Se detectaron {conteo_alertas} alertas de inconsistencia entre el Word y el Plan Indicativo.")
-                    else:
-                        st.success("🎉 ¡Validación correcta! Todos los indicadores corresponden al Plan Indicativo para cada MP.")
-                        
-                else:
-                    st.error("🚨 No se encontraron las columnas necesarias ('Código MP' e 'Indicador de Producto') en la pestaña MP del Plan Indicativo.")
-                    
+                    # Persistencia de auditoría PI en sesión
+                    st.session_state["df_auditoria_pi_resultado"] = df_word
+                    st.session_state["logs_diagnostico_pi"] = logs_diagnostico
+
             except Exception as e:
                 st.error(f"❌ Error al ejecutar la validación con el Plan Indicativo: {e}")
+
+    # RENDERIZADO PERSISTENTE DE LA AUDITORÍA PI
+    if "df_auditoria_pi_resultado" in st.session_state:
+        df_res_pi = st.session_state["df_auditoria_pi_resultado"]
+        
+        st.warning("🛠️ **Consola de Diagnóstico: Comparación Indicador de Producto (Word) vs. PI**")
+        with st.expander("👁️ Ver trazabilidad del cruce con el Plan Indicativo", expanded=False):
+            st.code("\n".join(st.session_state.get("logs_diagnostico_pi", [])), language="text")
+            
+        def color_semaforo(val):
+            if "🟢" in str(val):
+                return "background-color: #d4edda; color: #155724; font-weight: bold;"
+            return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+
+        df_final_render = df_res_pi[[
+            "Código MP", 
+            "Cod Indicador Word",
+            "Indicador de Producto CV - MGA", 
+            "Cod Indicador PI",
+            "Indicador en PI", 
+            "Resultado Validación"
+        ]].copy()
+        
+        st.markdown("##### 📈 Reporte de Inconsistencias: Indicador de Producto Word vs. Plan Indicativo")
+        st.dataframe(
+            df_final_render.style.map(color_semaforo, subset=["Resultado Validación"]),
+            use_container_width=True
+        )
+        
+        conteo_alertas = df_res_pi["Resultado Validación"].str.contains("🔴").sum()
+        if conteo_alertas > 0:
+            st.error(f"⚠️ Se detectaron {conteo_alertas} alertas de inconsistencia entre el Word y el Plan Indicativo.")
+        else:
+            st.success("🎉 ¡Validación correcta! Todos los indicadores corresponden al Plan Indicativo.")
 else:
     st.info("💡 Primero carga el archivo Word para habilitar el cruce contra el Plan Indicativo.")
-
-
-
 
 # ============================================================
 # MÓDULO DE VERIFICACIÓN Z023: PROYECTOS VIGENCIA 2026
@@ -410,7 +399,6 @@ else:
 st.markdown("---")
 st.subheader("📦 Auditoría Z023: Proyectos Asociados a la Meta de Producto (Vigencia 2026)")
 
-# Permitir archivos .xlsm (habilitados para macros), .xlsx y .xls
 uploaded_z023 = st.file_uploader(
     "Carga el archivo Z023 Consolidado (.xlsm o .xlsx)", 
     type=["xlsm", "xlsx", "xls"], 
@@ -424,13 +412,9 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
         if st.button("🚀 Analizar Proyectos Aportantes (Z023 - 2026)"):
             with st.spinner("⏳ Procesando Hoja1 de Z023, filtrando vigencia 2026 y agrupando proyectos..."):
                 try:
-                    # 1. Cargar específicamente la "Hoja1" requerida
                     df_z023 = pd.read_excel(uploaded_z023, sheet_name="Hoja1", engine="openpyxl")
-                    
-                    # Limpieza flexible de nombres de columnas
                     columnas_z023 = {str(c).strip(): c for c in df_z023.columns}
                     
-                    # Función auxiliar para encontrar columnas clave
                     def buscar_columna(patron, diccionario_cols):
                         for c_limpia, c_real in diccionario_cols.items():
                             if patron.lower() in c_limpia.lower():
@@ -445,29 +429,17 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
 
                     if not (col_vigencia and col_cod_mp and col_ppm_proj and col_desc_proj):
                         st.error("🚨 No se encontraron todas las columnas requeridas en la 'Hoja1' del Z023.")
-                        st.info(f"Columnas detectadas en Hoja1: {list(df_z023.columns)}")
                     else:
-                        # 2. Filtrar únicamente por la Vigencia 2026
                         df_z023_2026 = df_z023[df_z023[col_vigencia].astype(str).str.contains("2026", na=False)].copy()
                         
                         if df_z023_2026.empty:
                             st.warning("⚠️ El archivo Z023 no contiene registros para la vigencia 2026 en la 'Hoja1'.")
                         else:
-                            # Helper para aislar los dígitos de la MP concatenados con 'V'
-                            def extraer_codigo_numerico(texto):
-                                if pd.isna(texto) or str(texto).strip().lower() == "nan":
-                                    return ""
-                                texto_str = str(texto).strip()
-                                if "-" in texto_str:
-                                    texto_str = texto_str.split('-')[0].strip()
-                                num_extraido = re.sub(r'\D', '', texto_str)
-                                return f"V{num_extraido}" if num_extraido else ""
-
-                            # Agrupar Z023 por la MP para consolidar sus proyectos únicos
                             dict_z023_proyectos = {}
                             
                             for _, fila in df_z023_2026.iterrows():
-                                mp_key = extraer_codigo_numerico(fila[col_cod_mp])
+                                # Formateo con la letra 'V' concatenada
+                                mp_key = extraer_codigo_numerico(fila[col_cod_mp], prefijo="V")
                                 if not mp_key:
                                     continue
                                 
@@ -478,47 +450,43 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                                 if mp_key not in dict_z023_proyectos:
                                     dict_z023_proyectos[mp_key] = {}
 
-                                # Usamos el código PPM como clave única
                                 dict_z023_proyectos[mp_key][ppm] = {
                                     "PPM": ppm,
                                     "Descripcion": desc,
                                     "BPIN": bpin
                                 }
 
-                            # 3. Cruzar con las Metas de Producto del Word
                             conteo_proyectos = []
                             listado_codigos_ppm = []
                             resumen_detallado_proyectos = []
                             
                             for i, fila_word in df_word.iterrows():
                                 mp_word_raw = fila_word.get("Código MP", "")
-                                mp_key_word = extraer_codigo_numerico(mp_word_raw)
+                                mp_key_word = extraer_codigo_numerico(mp_word_raw, prefijo="V")
                                 
                                 if mp_key_word in dict_z023_proyectos:
                                     proyectos_map = dict_z023_proyectos[mp_key_word]
-                                    cant = len(proyectos_map)
-                                    conteo_proyectos.append(cant)
+                                    conteo_proyectos.append(len(proyectos_map))
                                     
                                     codigos_ppm = list(proyectos_map.keys())
                                     listado_codigos_ppm.append(", ".join(codigos_ppm))
                                     
-                                    detalles = []
-                                    for p in proyectos_map.values():
-                                        bpin_str = f" (BPIN: {p['BPIN']})" if p['BPIN'] not in ["No registra", "nan", ""] else ""
-                                        detalles.append(f"• [{p['PPM']}] {p['Descripcion']}{bpin_str}")
-                                    
+                                    detalles = [
+                                        f"• **[{p['PPM']}]** {p['Descripcion']}" + (f" *(BPIN: {p['BPIN']})*" if p['BPIN'] not in ["No registra", "nan", ""] else "")
+                                        for p in proyectos_map.values()
+                                    ]
                                     resumen_detallado_proyectos.append("\n".join(detalles))
                                 else:
                                     conteo_proyectos.append(0)
                                     listado_codigos_ppm.append("Sin proyectos 2026")
                                     resumen_detallado_proyectos.append("🔴 No se registraron proyectos asociados en la vigencia 2026 (Z023).")
 
-                            # Inyectar resultados al DataFrame
+                            df_word["Variable MP"] = [extraer_codigo_numerico(r.get("Código MP", ""), prefijo="V") for _, r in df_word.iterrows()]
                             df_word["Cant. Proyectos (2026)"] = conteo_proyectos
                             df_word["Códigos PPM"] = listado_codigos_ppm
                             df_word["Detalle Proyectos Z023"] = resumen_detallado_proyectos
                             
-                            # Guardar resultado en session_state para mantener persistencia
+                            # Persistencia de auditoría Z023 en sesión
                             st.session_state["df_z023_resultado"] = df_word.copy()
 
                 except Exception as e:
@@ -526,15 +494,15 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
     else:
         st.info("📌 Carga el archivo **Z023 Consolidado** para ejecutar el análisis de proyectos 2026.")
     
-    # RENDERIZADO PERSISTENTE: Visualización interactiva mediante tarjetas expandibles
+    # RENDERIZADO PERSISTENTE DE Z023 CON DESPLEGABLES INTERACTIVOS
     if "df_z023_resultado" in st.session_state and not st.session_state["df_z023_resultado"].empty:
         st.markdown("##### 📊 Consolidado de Proyectos Aportantes a Metas de Producto (2026)")
         
         df_resultados = st.session_state["df_z023_resultado"]
         
-        # 1. Vista resumida en tabla limpia (sin columnas masivas de texto)
         df_resumen_tabla = df_resultados[[
-            "Código MP", 
+            "Código MP",
+            "Variable MP", 
             "Cant. Proyectos (2026)", 
             "Códigos PPM"
         ]].copy()
@@ -545,16 +513,16 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
             hide_index=True,
             column_config={
                 "Código MP": st.column_config.TextColumn("Código MP", width="small"),
+                "Variable MP": st.column_config.TextColumn("Variable MP", width="small"),
                 "Cant. Proyectos (2026)": st.column_config.NumberColumn("Cant. Proyectos", width="small"),
                 "Códigos PPM": st.column_config.TextColumn("Códigos PPM", width="medium")
             }
         )
         
         st.markdown("---")
-        st.markdown("##### 🔍 Detalle Completo de Proyectos por Meta de Producto")
-        st.caption("Haz clic en cualquier Meta de Producto para desplegar sus proyectos y BPINs asociados sin restricciones de espacio.")
+        st.markdown("##### 🔍 Desglose Detallado por Meta de Producto (Acordeones Interactivos)")
 
-        # 2. Desglose detallado por Meta de Producto mediante acordeones interactivos
+        # Desglose interactivo por Meta de Producto mediante st.expander
         for idx, fila in df_resultados.iterrows():
             codigo_mp = fila.get("Código MP", f"Meta {idx+1}")
             cant_p = fila.get("Cant. Proyectos (2026)", 0)
@@ -569,7 +537,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                 
             with st.expander(label_expander, expanded=False):
                 if cant_p > 0:
-                    # Presentación formateada de cada proyecto
                     lineas = detalle_txt.split("\n")
                     for l in lineas:
                         if l.strip():
@@ -577,9 +544,10 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                 else:
                     st.warning("No se registraron proyectos asociados en la vigencia 2026 dentro del archivo Z023.")
 
+        # Resumen global de alertas para Z023
         sin_proyectos = (df_resultados["Cant. Proyectos (2026)"] == 0).sum()
         if sin_proyectos > 0:
-            st.warning(f"⚠️ Hay {sin_proyectos} Metas de Producto del Word que NO presentan proyectos en la vigencia 2026 del Z023.")
+            st.warning(f"⚠️ Hay {sin_proyectos} Meta(s) de Producto del Word que NO presentan proyectos en la vigencia 2026 del Z023.")
         else:
             st.success("🎉 Todas las Metas de Producto del Word cuentan con al menos un proyecto asignado en la vigencia 2026.")
 else:
