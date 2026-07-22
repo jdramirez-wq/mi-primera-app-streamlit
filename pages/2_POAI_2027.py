@@ -553,3 +553,107 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
 else:
     st.info("💡 Carga el archivo Word en la sección principal para habilitar el cruce con Z023.")
 
+
+# ============================================================
+# GENERACIÓN DE PROMPT INTEGRADO Y ENLACES A CHATGPT / GEMINI (POAI 2027)
+# ============================================================
+
+st.markdown("---")
+st.subheader("🤖 Generación de Prompt AI para Análisis POAI 2027")
+
+if "df_poai_estandar" in st.session_state and not st.session_state["df_poai_estandar"].empty:
+    df_poai_prompt = st.session_state["df_poai_estandar"].copy()
+    
+    nombre_proyecto = st.session_state.get("proyecto_nombre_tabla", "No detectado")
+    codigo_pi = st.session_state.get("metadatos", {}).get("codigo_pi", "No detectado")
+    bpin = st.session_state.get("metadatos", {}).get("bpin", "No detectado")
+    total_recursos = st.session_state.get("total_presupuesto_poai", "$0")
+    
+    # Formatear actividades de la Tabla 5
+    lineas_actividades = []
+    for idx, fila in df_poai_prompt.iterrows():
+        cod_mp = fila.get("COD. META DE PRODUCTO", "S/C")
+        prod_mga = fila.get("PRODUCTO MGA (COD+TEXTO)", "S/N")
+        actividad = fila.get("ACTIVIDAD DEL PROYECTO", "S/N")
+        recurso = fila.get("RECURSO TOTAL 2027", "$0")
+        
+        lineas_actividades.append(
+            f"  * [Meta: {cod_mp}] | Producto MGA: {prod_mga} | Actividad: {actividad} | Asignación 2027: {recurso}"
+        )
+    
+    bloque_actividades_txt = "\n".join(lineas_actividades)
+    
+    # Construcción del prompt con las directrices institucionales requeridas
+    prompt_poai = f"""Actúa como un experto en Planeación Pública, Formulación de Proyectos de Inversión (Metodología MGA) y Presupuesto Público.
+
+Tu tarea es revisar de manera exhaustiva la "Cadena de Valor" y el documento técnico para la radicación inicial del proyecto de inversión. Tu evaluación debe ser estricta, objetiva y estructurada.
+
+DATOS DEL PROYECTO
+- Nombre del Proyecto: {nombre_proyecto}
+- Código PS-SAP / PI: {codigo_pi}
+- Código BPIN: {bpin}
+- Presupuesto Total POAI 2027: {total_recursos}
+
+ACTIVIDADES Y RECURSOS PROGRAMADOS (POAI 2027):
+{bloque_actividades_txt}
+
+A continuación, analiza la información y entrega un informe de revisión evaluando los siguientes 4 criterios, indicando claramente qué cumple, qué no cumple y qué debe ajustarse (utiliza viñetas, separando por bloques y resalta en negrita las [Aprobaciones] o [Hallazgos/Errores]):
+
+1. Alineación Estratégica, Programática y Articulación
+- Articulación Perfecta: Verifica la articulación exacta entre la cadena de valor del proyecto y la del Plan de Desarrollo (productos asociados, indicador exacto y forma de acumulación idéntica).
+- REGLA DE ORO (Tercer Año de Gobierno): Revisa el estado actual de la meta. Si la meta está "cerrada" o programada para cerrarse/cumplirse totalmente en 2026, ESTÁ ESTRICTAMENTE PROHIBIDO aforar recursos para la vigencia 2027.
+- Observación de Indicadores (Obligatorio): Verifica que se indique expresamente si la meta se cumple con recursos de gestión, Regalías u otro proyecto, especificando numéricamente el aporte.
+- Reglas de Programación POAI 2027: Valida la programación de recursos para metas de SERVICIOS siempre que la meta esté programada para 2027, distinguiéndolas de metas de "apoyo financiero" o "entrega de bienes".
+*(Si no puedes leer en el archivo Word la programación de la meta PI, solicita el dato).*
+
+2. Coherencia Lógica y Sintaxis de Actividades
+- Lógica de la cadena de valor: Verifica que la sumatoria y ejecución de actividades conduzcan ineludiblemente al producto.
+- Sintaxis obligatoria: Comprueba que las actividades comiencen con verbo fuerte en infinitivo y expresen una acción concreta y medible.
+- Nivel estratégico: Rechaza actividades que sean simples "tareas" operativas o redactadas como "objetos del gasto" (ej. "Comprar computadores").
+- Longitud adecuada: Exige precisión sin párrafos confusos ni frases demasiado cortas.
+
+3. Evaluación de las Justificaciones
+3.1. Justificación Técnica y Financiera para proyectos POAI:
+- Identificar la importancia del proyecto para el cumplimiento del Plan de Desarrollo y sus acciones estratégicas.
+- Indicar numéricamente con cuánto contribuye el proyecto al alcance de la meta de producto (si es menor al 100%, especificar proyectos complementarios y su aporte).
+- Concluir si requiere reprogramar la meta o brindar justificación contundente de por qué no se reprograma.
+- Trazabilidad financiera explícita: Meta -> Producto -> Actividades -> Valores asignados.
+
+3.2. Estructura Tripartita de Justificaciones (Obligatorio):
+- A. Justificación Jurídico-Administrativa: Texto narrativo cohesionado citando la Ley 152 de 1994, Decreto 111 de 1996, Decreto Departamental 1-17-1278 de 2023, CONPES 3751 de 2013, Decreto 1082 de 2015 (modificado por Decreto 2104 de 2023), Ley 819, Ley 2200 de 2022, Sentencia C-036 de 2023 y el SUIP-PIIP. (Añadir aprobación de Asamblea si aplica, y reglas contundentes para Vigencias Futuras).
+- B. Justificación Técnica: PROHIBIDO justificar "para contratar personal". OBLIGATORIO explicar impacto en la MP y avance actual/proyectado.
+- C. Justificación Financiera: Verificación aritmética estricta. Formato: MP [código] / Producto MGA [código] / PI[código] / Fuente: [código] / Valor inicial: $ / Modificación (+/-): $ / Valor final: $
+*(REGLA ESPECIAL REGALÍAS - SGR: Si aplica SGR, citar Ley 2056 de 2020 y Decreto 1821 de 2020, validar alineación con Plan Indicativo SGR, verificar checklist de anexos específicos y redactar el Visto Bueno de Alineación Estratégica y Programática con la salvedad de viabilidad sectorial central).*
+
+4. Conclusión de Radicación, Checklist de Soportes y Redacción del Visto Bueno
+- Concepto de radicación claro y origen presupuestal especificado.
+- Checklist obligatorio de anexos (MGA en PDF, Presupuesto detallado en Excel, Evaplan, Certificados de Control Previo, Hacienda o Formatos Excel según el trámite).
+- Redacción del Visto Bueno:
+  * Si va a Asamblea: Especificar que es un visto bueno administrativo (la aprobación la realiza la Asamblea).
+  * Si es por Decreto: Indicar el trámite, valor, fuente, meta de producto (código y descripción), breve resumen de la importancia, aporte al Plan de Desarrollo y soportes.
+  * Concluir OBLIGATORIAMENTE con la salvedad expresando que es responsabilidad de la dependencia realizar los trámites respectivos para la culminación y correcta ejecución, y que el Visto Bueno otorgado por la Subdirección de Ordenamiento y Desarrollo Regional se suscribe a verificar la correcta alineación de la cadena de valor del Plan de Desarrollo con la del proyecto y su contribución a la implementación del Plan."""
+
+    st.markdown("##### 📝 Prompt Generado para POAI 2027")
+    st.text_area(
+        label="Copia o revisa el prompt generado a continuación:",
+        value=prompt_poai,
+        height=320,
+        key="txt_area_prompt_poai"
+    )
+
+    url_chatgpt = "https://chatgpt.com/"
+    url_gemini = "https://gemini.google.com/app"
+
+    st.markdown("##### 🚀 Analizar con Inteligencia Artificial")
+    col_gpt, col_gemini, col_espacio = st.columns([1, 1, 2])
+
+    with col_gpt:
+        st.link_button("🌐 Abrir en ChatGPT", url_chatgpt, use_container_width=True)
+
+    with col_gemini:
+        st.link_button("✨ Abrir en Gemini", url_gemini, use_container_width=True)
+
+    st.info("💡 **Instrucciones:** Haz clic en el botón de copiar (esquina superior derecha del cuadro del prompt) y abre la IA de tu preferencia con los botones superiores.")
+
+else:
+    st.info("💡 Sube un archivo Word válido con la información de la **Tabla 5 (POAI 2027)** para generar el prompt y activar los enlaces.")
