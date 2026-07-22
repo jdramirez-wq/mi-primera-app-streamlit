@@ -561,32 +561,40 @@ else:
 st.markdown("---")
 st.subheader("🤖 Generación de Prompt AI para Análisis POAI 2027")
 
-if "df_poai_estandar" in st.session_state and not st.session_state["df_poai_estandar"].empty:
-    df_poai_prompt = st.session_state["df_poai_estandar"].copy()
+# Modificación: Verificamos la carga general del documento sin supeditarlo a la Tabla 5
+if "texto_word_extraido" in st.session_state or ("df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty):
     
-    nombre_proyecto = st.session_state.get("proyecto_nombre_tabla", "No detectado")
+    # Extraer metadatos de sesión (con valores por defecto en caso de no encontrarse)
+    nombre_proyecto = st.session_state.get("proyecto_nombre_tabla", "No detectado en tabla (Revisar adjunto)")
     codigo_pi = st.session_state.get("metadatos", {}).get("codigo_pi", "No detectado")
     bpin = st.session_state.get("metadatos", {}).get("bpin", "No detectado")
     total_recursos = st.session_state.get("total_presupuesto_poai", "$0")
     
-    # Formatear actividades de la Tabla 5
+    # Formatear actividades si existen en la sesión
     lineas_actividades = []
-    for idx, fila in df_poai_prompt.iterrows():
-        cod_mp = fila.get("COD. META DE PRODUCTO", "S/C")
-        prod_mga = fila.get("PRODUCTO MGA (COD+TEXTO)", "S/N")
-        actividad = fila.get("ACTIVIDAD DEL PROYECTO", "S/N")
-        recurso = fila.get("RECURSO TOTAL 2027", "$0")
-        
-        lineas_actividades.append(
-            f"  * [Meta: {cod_mp}] | Producto MGA: {prod_mga} | Actividad: {actividad} | Asignación 2027: {recurso}"
-        )
+    if "df_poai_estandar" in st.session_state and not st.session_state["df_poai_estandar"].empty:
+        df_poai_prompt = st.session_state["df_poai_estandar"].copy()
+        for idx, fila in df_poai_prompt.iterrows():
+            cod_mp = fila.get("COD. META DE PRODUCTO", "S/C")
+            prod_mga = fila.get("PRODUCTO MGA (COD+TEXTO)", "S/N")
+            actividad = fila.get("ACTIVIDAD DEL PROYECTO", "S/N")
+            recurso = fila.get("RECURSO TOTAL 2027", "$0")
+            
+            lineas_actividades.append(
+                f"  * [Meta: {cod_mp}] | Producto MGA: {prod_mga} | Actividad: {actividad} | Asignación 2027: {recurso}"
+            )
     
-    bloque_actividades_txt = "\n".join(lineas_actividades)
+    if lineas_actividades:
+        bloque_actividades_txt = "\n".join(lineas_actividades)
+    else:
+        bloque_actividades_txt = "(No se estructuraron actividades automáticamente desde la Tabla 5. Por favor revisar/pegar el contenido del documento Word adjunto)."
     
-    # Construcción del prompt con las directrices institucionales requeridas
+    # Construcción completa del prompt
     prompt_poai = f"""Actúa como un experto en Planeación Pública, Formulación de Proyectos de Inversión (Metodología MGA) y Presupuesto Público.
 
-Tu tarea es revisar de manera exhaustiva la "Cadena de Valor" y el documento técnico para la radicación inicial del proyecto de inversión. Tu evaluación debe ser estricta, objetiva y estructurada.
+Tu tarea es revisar de manera exhaustiva la "Cadena de Valor" y el documento técnico para la radicación inicial de un proyecto de inversión. Tu evaluación debe ser estricta, objetiva y estructurada.
+
+A continuación, te proporcionaré los datos del proyecto y los soportes. Debes analizar la información y entregar un informe de revisión evaluando los siguientes 4 criterios, indicando claramente qué cumple, qué no cumple y qué debe ajustarse:
 
 DATOS DEL PROYECTO
 - Nombre del Proyecto: {nombre_proyecto}
@@ -597,43 +605,66 @@ DATOS DEL PROYECTO
 ACTIVIDADES Y RECURSOS PROGRAMADOS (POAI 2027):
 {bloque_actividades_txt}
 
-A continuación, analiza la información y entrega un informe de revisión evaluando los siguientes 4 criterios, indicando claramente qué cumple, qué no cumple y qué debe ajustarse (utiliza viñetas, separando por bloques y resalta en negrita las [Aprobaciones] o [Hallazgos/Errores]):
+CRITERIOS DE EVALUACIÓN:
 
 1. Alineación Estratégica, Programática y Articulación
-- Articulación Perfecta: Verifica la articulación exacta entre la cadena de valor del proyecto y la del Plan de Desarrollo (productos asociados, indicador exacto y forma de acumulación idéntica).
-- REGLA DE ORO (Tercer Año de Gobierno): Revisa el estado actual de la meta. Si la meta está "cerrada" o programada para cerrarse/cumplirse totalmente en 2026, ESTÁ ESTRICTAMENTE PROHIBIDO aforar recursos para la vigencia 2027.
-- Observación de Indicadores (Obligatorio): Verifica que se indique expresamente si la meta se cumple con recursos de gestión, Regalías u otro proyecto, especificando numéricamente el aporte.
-- Reglas de Programación POAI 2027: Valida la programación de recursos para metas de SERVICIOS siempre que la meta esté programada para 2027, distinguiéndolas de metas de "apoyo financiero" o "entrega de bienes".
-*(Si no puedes leer en el archivo Word la programación de la meta PI, solicita el dato).*
+- Articulación Perfecta: Verifica que exista una articulación exacta entre la cadena de valor del proyecto y la del Plan de Desarrollo (productos asociados, indicador exacto, y forma de acumulación idéntica).
+- REGLA DE ORO (Tercer Año de Gobierno): Revisa y pega en tu respuesta el estado actual de la meta. Si la meta está "cerrada" o está programada para cerrarse/cumplirse totalmente en 2026, ESTÁ ESTRICTAMENTE PROHIBIDO aforar recursos para la vigencia 2027.
+- Observación de Indicadores (Obligatorio): Debes verificar que se indique expresamente si la meta se cumple con recursos de gestión, de Regalías u otro proyecto de inversión, y especificar numéricamente cuánto aporta cada fuente.
+- Reglas de Programación POAI 2027: Es indispensable programar recursos para metas de SERVICIOS (capacitación, asistencia técnica, documentos de planeación, servicios de orientación, difusión, etc.) que se pueden cumplir con prestación de servicios para el POAI 2027, siempre que la meta esté programada para ese año. Distinguir claramente esto de las metas de "apoyo financiero" o "entrega de bienes", las cuales solo se cumplen con la entrega efectiva de los mismos que sea coherente con el PPI aprobado.
+*(Si no puedes leer en el archivo Word la programación de la meta PI, pide que te copien el dato para que valides la programación).*
 
 2. Coherencia Lógica y Sintaxis de Actividades
-- Lógica de la cadena de valor: Verifica que la sumatoria y ejecución de actividades conduzcan ineludiblemente al producto.
-- Sintaxis obligatoria: Comprueba que las actividades comiencen con verbo fuerte en infinitivo y expresen una acción concreta y medible.
-- Nivel estratégico: Rechaza actividades que sean simples "tareas" operativas o redactadas como "objetos del gasto" (ej. "Comprar computadores").
-- Longitud adecuada: Exige precisión sin párrafos confusos ni frases demasiado cortas.
+- Lógica de la cadena de valor: Verifica que la sumatoria y ejecución de las actividades conduzcan ineludiblemente a la obtención del producto.
+- Sintaxis obligatoria: Revisa que todas las actividades comiencen con un verbo fuerte en infinitivo y expresen una acción concreta y medible.
+- Nivel estratégico: Las actividades deben ser "estratégicas". Rechaza actividades que sean simples "tareas" operativas o que estén redactadas como "objetos del gasto" diseñados exclusivamente para justificar una contratación (ej. "Comprar computadores").
+- Longitud adecuada: La redacción de la actividad no debe ser un párrafo extenso y confuso, pero tampoco una frase tan corta que carezca de contexto. Debe ser precisa.
+*(Si no puedes leer los documentos pide que te peguen los textos para que puedas validar).*
 
 3. Evaluación de las Justificaciones
-3.1. Justificación Técnica y Financiera para proyectos POAI:
-- Identificar la importancia del proyecto para el cumplimiento del Plan de Desarrollo y sus acciones estratégicas.
-- Indicar numéricamente con cuánto contribuye el proyecto al alcance de la meta de producto (si es menor al 100%, especificar proyectos complementarios y su aporte).
-- Concluir si requiere reprogramar la meta o brindar justificación contundente de por qué no se reprograma.
-- Trazabilidad financiera explícita: Meta -> Producto -> Actividades -> Valores asignados.
+3.1. Justificación Técnica indicada para proyectos POAI:
+- Debe identificar la importancia de ejecutar el proyecto para el cumplimiento del Plan de Desarrollo y las acciones estratégicas que se cumplirán.
+- Obligatorio: Indicar numéricamente con cuánto contribuye el proyecto al alcance de la meta o metas de producto.
+- Si la contribución del proyecto no es igual al 100% de lo programado en la vigencia, debe especificar si existen otros proyectos complementarios y cuánto aportan.
+- Debe concluir si es necesario reprogramar la meta. En caso de no requerirlo (a pesar de haber brechas), debe existir una justificación técnica contundente de por qué no se reprograma.
+- Justificación Financiera: Debe presentar la trazabilidad financiera indicando: Meta -> Producto -> Actividades -> Valores asignados. Si el proyecto desglosa las tareas que componen cada actividad, estas deben estar costeadas y justificadas aquí.
 
 3.2. Estructura Tripartita de Justificaciones (Obligatorio):
-- A. Justificación Jurídico-Administrativa: Texto narrativo cohesionado citando la Ley 152 de 1994, Decreto 111 de 1996, Decreto Departamental 1-17-1278 de 2023, CONPES 3751 de 2013, Decreto 1082 de 2015 (modificado por Decreto 2104 de 2023), Ley 819, Ley 2200 de 2022, Sentencia C-036 de 2023 y el SUIP-PIIP. (Añadir aprobación de Asamblea si aplica, y reglas contundentes para Vigencias Futuras).
-- B. Justificación Técnica: PROHIBIDO justificar "para contratar personal". OBLIGATORIO explicar impacto en la MP y avance actual/proyectado.
-- C. Justificación Financiera: Verificación aritmética estricta. Formato: MP [código] / Producto MGA [código] / PI[código] / Fuente: [código] / Valor inicial: $ / Modificación (+/-): $ / Valor final: $
-*(REGLA ESPECIAL REGALÍAS - SGR: Si aplica SGR, citar Ley 2056 de 2020 y Decreto 1821 de 2020, validar alineación con Plan Indicativo SGR, verificar checklist de anexos específicos y redactar el Visto Bueno de Alineación Estratégica y Programática con la salvedad de viabilidad sectorial central).*
+- Toda justificación debe contener tres secciones redactadas como texto cohesionado y narrativo.
+- A. Justificación Jurídico-Administrativa:
+  Debe usar OBLIGATORIAMENTE este texto base (y complementar solo si es estrictamente necesario):
+  "La presente solicitud de modificación presupuestal se fundamenta en la Ley 152 de 1994 (Ley Orgánica del Plan de Desarrollo), que establece los principios de planeación estratégica, coordinación y flexibilidad; en el Decreto 111 de 1996 (Estatuto Orgánico del Presupuesto), que regula las modificaciones presupuestales; y en el Decreto Departamental 1-17-1278 de 2023, que reglamenta el Banco de Programas y Proyectos del Valle del Cauca. Adicionalmente, se acoge el CONPES 3751 de 2013 y el Decreto 1082 de 2015 (modificado por Decreto 2104 de 2023), la ley 819 citando los artículos específicos que permiten la adición, vigencia futura o reducción como referentes del sistema de inversión pública. Ley 2200 DE 2022, que establece la función de la asamblea, de estudiar las adiciones, reducciones y vigencias futuras, así como la Sentencia C-036 de 2023 Corte Constitucional de Colombia donde se establece que la asamblea debe estudiar estas solicitudes, para cambio de presupuesto de subprogramas o modificaciones de recursos propios, ya que los de la nación se realizan de acuerdo a la ley y no se presentan a la Asamblea, tampoco traslados internos entre actividades de un mismo proyecto, ni entre proyectos de un mismo subprograma. La modificación se tramita bajo los lineamientos del SUIP-PIIP."
+  (Añadir al final si el trámite lo amerita: "... y requiere aprobación de la Asamblea Departamental conforme a sus competencias constitucionales.")
+  *Regla Especial para Vigencias Futuras (VF):* Exigir demostración contundente de necesidad estratégica (no solo conveniencia). Verificar reglas de VFO (15% apropiación), VFE (Sectores Ley 1483/2011, doble registro) o VFC (contratos en ejecución, soportes).
+- B. Justificación Técnica:
+  PROHIBIDO: Usar "para contratar personal" como justificación (excepto nómina docente SED).
+  OBLIGATORIO: Explicar cómo impacta el cumplimiento de la meta (con código de la MP) y el avance actual/proyectado. Para contracréditos, explicar por qué reducir el recurso no afecta la meta original.
+- C. Justificación Financiera y Distribución por Actividad:
+  Verificación aritmética estricta. Trazabilidad explícita de recursos.
+  Formato exigido por actividad: MP [código] / Producto MGA [código] / PI[código]/.../XX "[nombre]" / Fuente: [código] / Valor inicial: $ / Modificación (– / +): $ / Valor final: $
 
-4. Conclusión de Radicación, Checklist de Soportes y Redacción del Visto Bueno
-- Concepto de radicación claro y origen presupuestal especificado.
-- Checklist obligatorio de anexos (MGA en PDF, Presupuesto detallado en Excel, Evaplan, Certificados de Control Previo, Hacienda o Formatos Excel según el trámite).
-- Redacción del Visto Bueno:
-  * Si va a Asamblea: Especificar que es un visto bueno administrativo (la aprobación la realiza la Asamblea).
-  * Si es por Decreto: Indicar el trámite, valor, fuente, meta de producto (código y descripción), breve resumen de la importancia, aporte al Plan de Desarrollo y soportes.
-  * Concluir OBLIGATORIAMENTE con la salvedad expresando que es responsabilidad de la dependencia realizar los trámites respectivos para la culminación y correcta ejecución, y que el Visto Bueno otorgado por la Subdirección de Ordenamiento y Desarrollo Regional se suscribe a verificar la correcta alineación de la cadena de valor del Plan de Desarrollo con la del proyecto y su contribución a la implementación del Plan."""
+REGLA ESPECIAL PARA PROYECTOS FINANCIADOS CON REGALÍAS (SGR):
+Si el proyecto indica que su fuente de financiación es el Sistema General de Regalías (SGR), omite las reglas de recursos propios y aplica strictly las siguientes directrices:
+- Justificación Jurídica: Debe citar OBLIGATORIAMENTE la normatividad de Regalías (Ley 2056 de 2020) y el Decreto 1821 de 2020, omitiendo los Decretos de modificaciones presupuestales de recursos propios.
+- Justificación Técnica (Alineación Estratégica): Debe validar expresamente la alineación con el Plan Indicativo SGR. OBLIGATORIO: Verifica que el documento técnico justifique a qué Iniciativa específica, Programa y Línea Estratégica del Plan Indicativo SGR apunta el proyecto, así como las metas de producto asociadas.
+- Checklist Estricto de Soportes para SGR: Verifica y confirma explícitamente que se acompañen los siguientes anexos: Cadena de Valor (Word/PDF), MGA exportada en formato PDF, Presupuesto detallado, Archivo Excel de registro eVaplan, Oficio aclaratorio / remisorio firmado en PDF.
+- Redacción del Visto Bueno (Excepción SGR): Debes redactar un "Visto Bueno de Alineación Estratégica y Programática". En la redacción debes mencionar explícitamente la Iniciativa específica del SGR identificada en los documentos. Además, incluye obligatoriamente la siguiente salvedad: "Teniendo en cuenta que este proyecto ya cuenta con la viabilidad sectorial del nivel central (Ministerio / OCAD), la presente revisión se suscribe únicamente a la alineación con el Plan de Desarrollo Departamental, dejando la salvedad expresa de que es responsabilidad exclusiva de la entidad ejecutora entregar las certificaciones respectivas e informes periódicos que evidencien el aporte efectivo a las metas de producto".
 
-    st.markdown("##### 📝 Prompt Generado para POAI 2027")
+4. Conclusión de Radicación y Revisión Estricta de Soportes
+- Concepto de Radicación: Concluye de manera clara por qué se debe aprobar la radicación del proyecto nuevo.
+- Origen presupuestal: Especifica si el proyecto nace con recursos de la vigencia, si requiere una adición presupuestal, un crédito, etc.
+- Checklist de Soportes Obligatorios: Confirma que el documento hace referencia o cuenta con los anexos obligatorios para la radicación: Documento MGA (solo radicación inicial o actualización POAI), Presupuesto detallado, Certificados de control previo.
+
+FORMATO DE SALIDA ESPERADO:
+- Entrega tu revisión utilizando viñetas y separando el análisis por cada uno de los 4 bloques mencionados.
+- Usa negritas para resaltar las [Aprobaciones] o los [Hallazgos/Errores] encontrados.
+- Debes redactar el Visto Bueno respetando las siguientes pautas:
+  * En caso de ir a Asamblea: debes empezar aclarando que es un visto bueno administrativo (la aprobación la debe hacer la Asamblea).
+  * Si es por Decreto: indicarlo directamente.
+  * Estructura del Visto Bueno: indicar el trámite, el valor, la fuente, la meta de producto asociada (código y descripción), justificación evaluada, breve resumen de la importancia del trámite y su aporte al Plan de Desarrollo, y los documentos soporte.
+  * Conclusión obligatoria: debe incluir la salvedad de que "es responsabilidad de la dependencia [Nombre Dependencia] realizar los trámites respectivos para culminar el trámite y su correcta ejecución, y que el visto bueno otorgado por la Subdirección de Ordenamiento y Desarrollo Regional se suscribe a verificar la correcta alineación de la cadena de valor del Plan de Desarrollo con la cadena de valor del proyecto, y su contribución a la implementación del Plan de Desarrollo"."""
+
+    st.markdown("##### 📝 Prompt Generado")
     st.text_area(
         label="Copia o revisa el prompt generado a continuación:",
         value=prompt_poai,
@@ -656,4 +687,4 @@ A continuación, analiza la información y entrega un informe de revisión evalu
     st.info("💡 **Instrucciones:** Haz clic en el botón de copiar (esquina superior derecha del cuadro del prompt) y abre la IA de tu preferencia con los botones superiores.")
 
 else:
-    st.info("💡 Sube un archivo Word válido con la información de la **Tabla 5 (POAI 2027)** para generar el prompt y activar los enlaces.")
+    st.info("💡 Carga un archivo Word en la parte superior para generar automáticamente el prompt con los datos del proyecto.")
