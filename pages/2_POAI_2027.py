@@ -552,3 +552,101 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
             st.success("🎉 Todas las Metas de Producto del Word cuentan con al menos un proyecto asignado en la vigencia 2026.")
 else:
     st.info("💡 Carga el archivo Word en la sección principal para habilitar el cruce con Z023.")
+
+
+import streamlit as st
+import streamlit.components.v1 as components
+import urllib.parse
+
+def mostrar_evaluador_mga():
+    st.markdown("## 📋 Evaluador Estricto de Proyectos de Inversión (MGA / POAI / SGR)")
+    st.caption("Genera el prompt institucional optimizado con tus datos técnicos y abre Gemini o ChatGPT en un clic.")
+
+    # 1. Entrada de datos por parte del usuario
+    datos_proyecto = st.text_area(
+        "Pega aquí la Cadena de Valor, texto del Word o soportes del proyecto:",
+        height=250,
+        placeholder="Pega el texto del documento técnico, meta MP, fuentes de financiación, presupuesto y justificaciones..."
+    )
+
+    # 2. Plantilla del Prompt
+    prompt_base = """Actúa como un experto en Planeación Pública, Formulación de Proyectos de Inversión (Metodología MGA) y Presupuesto Público.
+
+Tu tarea es revisar de manera exhaustiva la "Cadena de Valor" y el documento técnico para la radicación inicial o modificación de un proyecto de inversión. Tu evaluación debe ser estricta, objetiva y estructurada.
+
+A continuación, te proporcionaré los datos del proyecto y los soportes. Debes analizar la información y entregar un informe de revisión evaluando los siguientes 4 criterios, indicando claramente qué cumple, qué no cumple y qué debe ajustarse:
+
+1. ALINEACIÓN ESTRATÉGICA, PROGRAMÁTICA Y ARTICULACIÓN
+- Articulación Perfecta: Verifica que exista una articulación exacta entre la cadena de valor del proyecto y la del Plan de Desarrollo (productos asociados, indicador exacto, y forma de acumulación idéntica).
+- REGLA DE ORO (Tercer Año de Gobierno): Revisa y pega en tu respuesta el estado actual de la meta. Si la meta está "cerrada" o programada para cerrarse/cumplirse totalmente en 2026, ESTÁ ESTRICTAMENTE PROHIBIDO aforar recursos para la vigencia 2027.
+- Observación de Indicadores (Obligatorio): Debes verificar que se indique expresamente si la meta se cumple con recursos de gestión, de Regalías u otro proyecto de inversión, y especificar numéricamente cuánto aporta cada fuente.
+- Reglas de Programación POAI 2027: Es indispensable programar recursos para metas de SERVICIOS (capacitación, asistencia técnica, documentos de planeación, servicios de orientación, difusión, etc.) que se pueden cumplir con prestación de servicios para el POAI 2027, siempre que la meta esté programada para ese año. Distinguir claramente esto de las metas de "apoyo financiero" o "entrega de bienes", las cuales solo se cumplen con la entrega efectiva de los mismos. Debe ser coherente con el PPI aprobado.
+- Si no puedes leer en el archivo Word la programación de la meta PI, pide explícitamente que te copien el dato para validar la programación.
+
+2. COHERENCIA LÓGICA Y SINTAXIS DE ACTIVIDADES
+- Lógica de la cadena de valor: Verifica que la sumatoria y ejecución de las actividades conduzcan ineludiblemente a la obtención del producto.
+- Sintaxis obligatoria: Revisa que todas las actividades comiencen con un verbo fuerte en infinitivo y expresen una acción concreta y medible.
+- Nivel estratégico: Las actividades deben ser "estratégicas". Rechaza actividades que sean simples "tareas" operativas o redactadas como "objetos del gasto" diseñados exclusivamente para justificar una contratación (ej. "Comprar computadores").
+- Longitud adecuada: La redacción de la actividad debe ser precisa, ni un párrafo confuso ni una frase vacía.
+
+3. EVALUACIÓN DE LAS JUSTIFICACIONES
+3.1. Justificación Técnica para proyectos POAI:
+- Identificar la importancia de ejecutar el proyecto para el cumplimiento del Plan de Desarrollo y las acciones estratégicas que se cumplirán.
+- OBLIGATORIO: Indicar numéricamente con cuánto contribuye el proyecto al alcance de la meta o metas de producto.
+- Si la contribución no es del 100% de lo programado en la vigencia, especificar si existen otros proyectos complementarios y cuánto aportan.
+- Concluir si es necesario reprogramar la meta. Si no lo requiere, presentar justificación técnica contundente.
+- Justificación Financiera: Trazabilidad financiera (Meta -> Producto -> Actividades -> Valores asignados).
+
+3.2. Estructura Tripartita de Justificaciones (Obligatorio):
+A. Justificación Jurídico-Administrativa:
+  Usar OBLIGATORIAMENTE este texto base:
+  "La presente solicitud de modificación presupuestal se fundamenta en la Ley 152 de 1994 (Ley Orgánica del Plan de Desarrollo), que establece los principios de planeación estratégica, coordinación y flexibilidad; en el Decreto 111 de 1996 (Estatuto Orgánico del Presupuesto), que regula las modificaciones presupuestales; y en el Decreto Departamental 1‑17‑1278 de 2023, que reglamenta el Banco de Programas y Proyectos del Valle del Cauca. Adicionalmente, se acoge el CONPES 3751 de 2013 y el Decreto 1082 de 2015 (modificado por Decreto 2104 de 2023), la ley 819 citando los artículos específicos que permiten la adición, vigencia futura o reducción como referentes del sistema de inversión pública. Ley 2200 DE 2022, que establece la función de la asamblea, de estudiar las adiciones, reducciones y vigencias futuras, así como la Sentencia C-036 de 2023 Corte Constitucional de Colombia donde se establece que la asamblea debe estudiar estas solicitudes, para cambio de presupuesto de subprogramas o modificaciones de recursos propios, ya que los de la nación se realizan de acuerdo a la ley y no se presentan a la Asamblea, tampoco traslados internos entre actividades de un mismo proyecto, ni entre proyectos de un mismo subprograma. La modificación se tramita bajo los lineamientos del SUIP‑PIIP."
+  (Añadir al final si lo amerita: "... y requiere aprobación de la Asamblea Departamental conforme a sus competencias constitucionales.")
+  *Vigencias Futuras (VF):* Demostración contundente de necesidad estratégica. Verificar VFO, VFE o VFC.
+
+B. Justificación Técnica:
+  PROHIBIDO: Usar "para contratar personal" como justificación (excepto nómina docente SED).
+  OBLIGATORIO: Explicar cómo impacta el cumplimiento de la meta (con código MP) y avance actual/proyectado. Para contracréditos, explicar por qué reducir el recurso no afecta la meta original.
+
+C. Justificación Financiera y Distribución por Actividad:
+  Formato exigido por actividad: MP [código] / Producto MGA [código] / PI[código]/.../XX "[nombre]" / Fuente: [código] / Valor inicial: $ / Modificación (– / +): $ / Valor final: $
+
+REGLA ESPECIAL PARA PROYECTOS FINANCIADOS CON REGALÍAS (SGR):
+Si la fuente es SGR, aplica estrictamente:
+- Justificación Jurídica: Citar OBLIGATORIAMENTE Ley 2056 de 2020 y Decreto 1821 de 2020.
+- Justificación Técnica: Validar alineación con el Plan Indicativo SGR (Iniciativa específica, Programa y Línea Estratégica SGR).
+- Redacción del Visto Bueno (SGR): Mencionar la Iniciativa SGR e incluir la salvedad: "Teniendo en cuenta que este proyecto ya cuenta con la viabilidad sectorial del nivel central (Ministerio / OCAD), la presente revisión se suscribe únicamente a la alineación con el Plan de Desarrollo Departamental, dejando la salvedad expresa de que es responsabilidad exclusiva de la entidad ejecutora entregar las certificaciones respectivas e informes periódicos que evidencien el aporte efectivo a las metas de producto".
+
+4. CONCLUSIÓN DE RADICACIÓN Y REVISIÓN ESTRICTA DE SOPORTES
+- Checklist Obligatorio: Cadena de Valor (Word/PDF), MGA exportada (PDF), Presupuesto Detallado (Excel) con cronograma y fuentes, Archivo Excel reporte Evaplan, Certificados de Control Previo (viabilidades).
+
+FORMATO DE SALIDA ESPERADO:
+- Entrega tu revisión utilizando viñetas y separando el análisis por los 4 bloques.
+- Usa negritas para resaltar [Aprobaciones] o [Hallazgos/Errores].
+- REDACCIÓN DEL VISTO BUENO:
+  * Si va a Asamblea: Aclarar que es Visto Bueno Administrativo.
+  * Si es por Decreto: Indicar el Visto Bueno formal.
+  * Debe incluir: Trámite, valor, fuente, meta de producto (código y descripción), breve resumen del impacto y soportes.
+  * Concluir OBLIGATORIAMENTE con: "El visto bueno otorgado por la Subdirección de Ordenamiento y Desarrollo Regional se suscribe a verificar la correcta alineación de la cadena de valor del Plan de Desarrollo con la cadena de valor del proyecto, su contribución a la implementación del Plan de Desarrollo y dejando la salvedad que es responsabilidad de la dependencia [Nombre Dependencia] realizar los trámites respectivos para culminar el trámite y su correcta ejecución."
+
+---
+DATOS DEL PROYECTO Y SOPORTES A EVALUAR:
+"""
+
+    if datos_proyecto.strip():
+        prompt_completo = prompt_base + "\n" + datos_proyecto.strip()
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.markdown("### 1. Copiar al Portapapeles")
+            st.text_area("Prompt compilado listo:", value=prompt_completo, height=150)
+
+        with col2:
+            st.markdown("### 2. Abrir en tu IA favorita")
+            st.write("Haz clic para abrir la plataforma (el prompt ya estará en tu portapapeles si lo copias arriba):")
+            
+            st.link_button("✨ Abrir Gemini", "https://gemini.google.com/app", use_container_width=True)
+            st.link_button("🤖 Abrir ChatGPT", "https://chat.openai.com/", use_container_width=True)
+    else:
+        st.info("👆 Ingresa o pega la información técnica arriba para compilar el prompt.")
