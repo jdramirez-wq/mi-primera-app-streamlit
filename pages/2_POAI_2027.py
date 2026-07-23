@@ -274,35 +274,82 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
     df_word = st.session_state["df_indicadores_estandar"].copy()
     
     if st.button("🚀 Ejecutar Cruce y Comparación con PI"):
-        with st.spinner("⏳ Conectando con Plan Indicativo y comparando indicadores de producto..."):
+        with st.spinner("⏳ Conectando con Plan Indicativo y auditando comportamiento de metas..."):
             try:
                 df_drive = leer_plan_indicativo_drive(URL_DRIVE_EXCEL)
                 
                 columnas_reales = list(df_drive.columns)
                 col_codigo_mp = None
                 col_indicador_drive = None
+                col_pg = None
+                col_val_2024 = None
+                col_val_2025 = None
+                col_prog_2026 = None
+                col_prog_2027 = None
+                col_comportamiento = None
                 
-                for col in columnas_reales:
-                    col_limpia = str(col).strip().lower().replace("á","a").replace("é","e").replace("í","i").replace("ó","o").replace("ú","u")
-                    if "codigo mp" in col_limpia:
+                # ------------------------------------------------------------
+                # Detección inteligente y posicional de columnas en el PI
+                # ------------------------------------------------------------
+                coincidencias_pg = []
+                for idx, col in enumerate(columnas_reales):
+                    col_limpia = str(col).strip().upper().replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
+                    
+                    if "CODIGO MP" in col_limpia:
                         col_codigo_mp = col
-                    elif "indicador" in col_limpia and "producto" in col_limpia:
+                    elif "INDICADOR" in col_limpia and "PRODUCTO" in col_limpia:
                         col_indicador_drive = col
-                
+                    elif "PG 2024-2027" in col_limpia or "PROGRAMACION GENERAL" in col_limpia:
+                        coincidencias_pg.append(col)
+                    elif "VAL ALC 2024" in col_limpia:
+                        col_val_2024 = col
+                    elif "VAL ALC 2025" in col_limpia:
+                        col_val_2025 = col
+                        # "2026" se encuentra inmediatamente a la derecha de "VAL ALC 2025"
+                        if idx + 1 < len(columnas_reales):
+                            col_prog_2026 = columnas_reales[idx + 1]
+                        # "2027" se encuentra a la derecha de "2026"
+                        if idx + 2 < len(columnas_reales):
+                            col_prog_2027 = columnas_reales[idx + 2]
+                    elif "VERIFICACION DEL COMPORTAMIENTO DE META" in col_limpia or "COMPORTAMIENTO" in col_limpia:
+                        col_comportamiento = col
+
+                # Tomar la segunda coincidencia de PG 2024-2027 según requerimiento
+                if len(coincidencias_pg) >= 2:
+                    col_pg = coincidencias_pg[1]
+                elif len(coincidencias_pg) == 1:
+                    col_pg = coincidencias_pg[0]
+
                 if col_codigo_mp and col_indicador_drive:
-                    dict_pi_indicadores = {}
-                    dict_pi_codigos_prod = {}
+                    # Diccionarios de datos extraídos desde el PI
+                    dict_pi_datos = {}
                     
                     for _, fila in df_drive.iterrows():
                         mp_raw = fila[col_codigo_mp]
-                        ind_pi_raw = fila[col_indicador_drive]
-                        
                         mp_llave = extraer_codigo_numerico(mp_raw)
-                        cod_prod_pi = extraer_codigo_numerico(ind_pi_raw)
                         
                         if mp_llave:
-                            dict_pi_indicadores[mp_llave] = str(ind_pi_raw).strip()
-                            dict_pi_codigos_prod[mp_llave] = cod_prod_pi
+                            ind_pi_raw = str(fila[col_indicador_drive]).strip() if pd.notna(fila[col_indicador_drive]) else "S/N"
+                            cod_prod_pi = extraer_codigo_numerico(ind_pi_raw)
+                            
+                            # Lectura de campos cuantitativos del PI
+                            val_pg = fila[col_pg] if col_pg and pd.notna(fila[col_pg]) else 0.0
+                            val_2024 = fila[col_val_2024] if col_val_2024 and pd.notna(fila[col_val_2024]) else "NP"
+                            val_2025 = fila[col_val_2025] if col_val_2025 and pd.notna(fila[col_val_2025]) else "NP"
+                            val_2026 = fila[col_prog_2026] if col_prog_2026 and pd.notna(fila[col_prog_2026]) else "NP"
+                            val_2027 = fila[col_prog_2027] if col_prog_2027 and pd.notna(fila[col_prog_2027]) else "NP"
+                            comportamiento = str(fila[col_comportamiento]).strip().upper() if col_comportamiento and pd.notna(fila[col_comportamiento]) else "S/D"
+                            
+                            dict_pi_datos[mp_llave] = {
+                                "ind_texto": ind_pi_raw,
+                                "cod_prod_pi": cod_prod_pi,
+                                "pg": val_pg,
+                                "val_2024": val_2024,
+                                "val_2025": val_2025,
+                                "prog_2026": val_2026,
+                                "prog_2027": val_2027,
+                                "comportamiento": comportamiento
+                            }
 
                     logs_diagnostico = []
                     resultados_validacion = []
@@ -310,6 +357,28 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     codigos_word_extraidos = []
                     codigos_pi_extraidos = []
                     
+                    # Nuevas columnas a generar
+                    list_pg = []
+                    list_2024 = []
+                    list_2025 = []
+                    list_2026 = []
+                    list_2027 = []
+                    list_comportamiento = []
+                    list_ejecutado_hasta_2026 = []
+                    list_sugerencia_poai = []
+                    
+                    # Función auxiliar para convertir valores (manejando 'NP' o textos)
+                    def convertir_a_numero(val):
+                        if pd.isna(val):
+                            return 0.0
+                        val_str = str(val).strip().upper().replace(",", ".")
+                        if val_str in ["NP", "N/A", "S/D", ""]:
+                            return 0.0
+                        try:
+                            return float(val_str)
+                        except ValueError:
+                            return 0.0
+
                     for i, fila_word in df_word.iterrows():
                         mp_word_raw = fila_word.get("Código MP", "")
                         mp_llave_word = extraer_codigo_numerico(mp_word_raw)
@@ -319,44 +388,92 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         
                         codigos_word_extraidos.append(cod_prod_word if cod_prod_word else "No detectado")
                         
-                        if not mp_llave_word:
-                            resultados_validacion.append("🔴 MP ausente en Word")
-                            textos_pi_encontrados.append("N/A")
+                        if not mp_llave_word or mp_llave_word not in dict_pi_datos:
+                            resultados_validacion.append("🔴 MP no existe en PI" if mp_llave_word else "🔴 MP ausente en Word")
+                            textos_pi_encontrados.append("NO EXISTE META EN PI")
                             codigos_pi_extraidos.append("N/A")
-                            logs_diagnostico.append(f"Fila {i}: Falta el 'Código MP' en el Word.")
+                            list_pg.append("N/A")
+                            list_2024.append("N/A")
+                            list_2025.append("N/A")
+                            list_2026.append("N/A")
+                            list_2027.append("N/A")
+                            list_comportamiento.append("N/A")
+                            list_ejecutado_hasta_2026.append(0.0)
+                            list_sugerencia_poai.append("⚠️ Revisar MP")
+                            logs_diagnostico.append(f"❌ Fila {i}: La meta '{mp_word_raw}' no se encontró en el PI.")
                         else:
-                            if mp_llave_word in dict_pi_codigos_prod:
-                                cod_prod_pi = dict_pi_codigos_prod[mp_llave_word]
-                                texto_pi = dict_pi_indicadores[mp_llave_word]
-                                
-                                codigos_pi_extraidos.append(cod_prod_pi if cod_prod_pi else "No detectado")
-                                textos_pi_encontrados.append(texto_pi)
-                                
-                                if cod_prod_word and cod_prod_pi and cod_prod_word == cod_prod_pi:
-                                    resultados_validacion.append("🟢 Corresponde al PI")
-                                    logs_diagnostico.append(f"✅ Fila {i} (Llave MP: {mp_llave_word}): Coincidencia exacta. Word: '{cod_prod_word}' == PI: '{cod_prod_pi}'.")
+                            datos_meta = dict_pi_datos[mp_llave_word]
+                            
+                            cod_prod_pi = datos_meta["cod_prod_pi"]
+                            texto_pi = datos_meta["ind_texto"]
+                            
+                            codigos_pi_extraidos.append(cod_prod_pi if cod_prod_pi else "No detectado")
+                            textos_pi_encontrados.append(texto_pi)
+                            
+                            # Asignar valores del PI
+                            pg_val = datos_meta["pg"]
+                            v_2024 = datos_meta["val_2024"]
+                            v_2025 = datos_meta["val_2025"]
+                            v_2026 = datos_meta["prog_2026"]
+                            v_2027 = datos_meta["prog_2027"]
+                            comp_val = datos_meta["comportamiento"]
+                            
+                            list_pg.append(pg_val)
+                            list_2024.append(v_2024)
+                            list_2025.append(v_2025)
+                            list_2026.append(v_2026)
+                            list_2027.append(v_2027)
+                            list_comportamiento.append(comp_val)
+                            
+                            # 🧮 Suma acumulada hasta 2026 (ignorando textos 'NP')
+                            suma_2026 = convertir_a_numero(v_2024) + convertir_a_numero(v_2025) + convertir_a_numero(v_2026)
+                            pg_num = convertir_a_numero(pg_val)
+                            
+                            list_ejecutado_hasta_2026.append(suma_2026)
+                            
+                            # 🎯 Regla de Negocio: Evaluación de Sugerencia POAI 2027
+                            if comp_val == "ACUMULADO":
+                                if suma_2026 < pg_num:
+                                    sugerencia = "🟢 Se sugiere Programación"
                                 else:
-                                    resultados_validacion.append("🔴 Código no coincide")
-                                    logs_diagnostico.append(f"❌ Fila {i} (Llave MP: {mp_llave_word}): DISCREPANCIA DETECTADA. Word: '{cod_prod_word}' vs PI: '{cod_prod_pi}'.")
+                                    sugerencia = "🔴 Meta Cumplida (Prohibido aforar)"
                             else:
-                                resultados_validacion.append("🔴 MP no existe en PI")
-                                textos_pi_encontrados.append("NO EXISTE META EN PI")
-                                codigos_pi_extraidos.append("N/A")
-                                logs_diagnostico.append(f"❌ Fila {i}: La llave MP '{mp_llave_word}' (Word) no existe en el PI.")
+                                sugerencia = "🟢 Se sugiere Programación"
+                                
+                            list_sugerencia_poai.append(sugerencia)
+                            
+                            # Validación de coincidencia de código de producto
+                            if cod_prod_word and cod_prod_pi and cod_prod_word == cod_prod_pi:
+                                resultados_validacion.append("🟢 Corresponde al PI")
+                                logs_diagnostico.append(f"✅ Fila {i} (Llave MP: {mp_llave_word}): Coincidencia exacta de indicador.")
+                            else:
+                                resultados_validacion.append("🔴 Código no coincide")
+                                logs_diagnostico.append(f"❌ Fila {i} (Llave MP: {mp_llave_word}): Discrepancia. Word: '{cod_prod_word}' vs PI: '{cod_prod_pi}'.")
 
+                    # Asignación de columnas al DataFrame resultado
                     df_word["Cod Indicador Word"] = codigos_word_extraidos
                     df_word["Cod Indicador PI"] = codigos_pi_extraidos
                     df_word["Indicador en PI"] = textos_pi_encontrados
+                    df_word["PG 2024-2027"] = list_pg
+                    df_word["VAL ALC 2024"] = list_2024
+                    df_word["VAL ALC 2025"] = list_2025
+                    df_word["2026"] = list_2026
+                    df_word["2027"] = list_2027
+                    df_word["Acumulado a 2026"] = list_ejecutado_hasta_2026
+                    df_word["COMPORTAMIENTO"] = list_comportamiento
+                    df_word["Sugerencia POAI 2027"] = list_sugerencia_poai
                     df_word["Resultado Validación"] = resultados_validacion
                     
-                    # Persistencia de auditoría PI en sesión
+                    # Persistencia en sesión
                     st.session_state["df_auditoria_pi_resultado"] = df_word
                     st.session_state["logs_diagnostico_pi"] = logs_diagnostico
 
             except Exception as e:
                 st.error(f"❌ Error al ejecutar la validación con el Plan Indicativo: {e}")
 
-    # RENDERIZADO PERSISTENTE DE LA AUDITORÍA PI
+    # ------------------------------------------------------------
+    # RENDERIZADO PERSISTENTE DE LA AUDITORÍA PI Y SUS TABLAS
+    # ------------------------------------------------------------
     if "df_auditoria_pi_resultado" in st.session_state:
         df_res_pi = st.session_state["df_auditoria_pi_resultado"]
         
@@ -365,33 +482,44 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
             st.code("\n".join(st.session_state.get("logs_diagnostico_pi", [])), language="text")
             
         def color_semaforo(val):
-            if "🟢" in str(val):
+            val_str = str(val)
+            if "🟢" in val_str:
                 return "background-color: #d4edda; color: #155724; font-weight: bold;"
-            return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+            elif "🔴" in val_str:
+                return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+            return "background-color: #fff3cd; color: #856404; font-weight: bold;"
 
         df_final_render = df_res_pi[[
             "Código MP", 
             "Cod Indicador Word",
-            "Indicador de Producto CV - MGA", 
             "Cod Indicador PI",
-            "Indicador en PI", 
-            "Resultado Validación"
+            "Resultado Validación",
+            "PG 2024-2027",
+            "VAL ALC 2024",
+            "VAL ALC 2025",
+            "2026",
+            "Acumulado a 2026",
+            "2027",
+            "COMPORTAMIENTO",
+            "Sugerencia POAI 2027"
         ]].copy()
         
-        st.markdown("##### 📈 Reporte de Inconsistencias: Indicador de Producto Word vs. Plan Indicativo")
+        st.markdown("##### 📈 Reporte de Inconsistencias y Regla de Cumplimiento de Metas PI")
         st.dataframe(
-            df_final_render.style.map(color_semaforo, subset=["Resultado Validación"]),
+            df_final_render.style.map(color_semaforo, subset=["Resultado Validación", "Sugerencia POAI 2027"]),
             use_container_width=True
         )
         
         conteo_alertas = df_res_pi["Resultado Validación"].str.contains("🔴").sum()
-        if conteo_alertas > 0:
-            st.error(f"⚠️ Se detectaron {conteo_alertas} alertas de inconsistencia entre el Word y el Plan Indicativo.")
+        conteo_meta_cumplida = df_res_pi["Sugerencia POAI 2027"].str.contains("🔴 Meta Cumplida").sum()
+        
+        if conteo_alertas > 0 or conteo_meta_cumplida > 0:
+            st.error(f"⚠️ Se detectaron {conteo_alertas} discordancias de código y {conteo_meta_cumplida} meta(s) que ya alcanzaron cumplimiento antes de 2027.")
         else:
-            st.success("🎉 ¡Validación correcta! Todos los indicadores corresponden al Plan Indicativo.")
+            st.success("🎉 ¡Validación correcta! Todos los indicadores corresponden al PI y están habilitados para asignación POAI 2027.")
 else:
     st.info("💡 Primero carga el archivo Word para habilitar el cruce contra el Plan Indicativo.")
-
+    
 # ============================================================
 # MÓDULO DE VERIFICACIÓN Z023: PROYECTOS VIGENCIA 2026
 # ============================================================
