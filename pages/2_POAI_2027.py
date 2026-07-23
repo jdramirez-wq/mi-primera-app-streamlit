@@ -273,6 +273,9 @@ if "df_indicadores_estandar" in st.session_state:
     if "df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty:
         df_word = st.session_state["df_indicadores_estandar"].copy()
         
+        # ------------------------------------------------------------
+        # 1. BOTÓN DE PROCESAMIENTO (SOLO CALCULA Y GUARDA EN SESSION_STATE)
+        # ------------------------------------------------------------
         if st.button("🚀 Ejecutar Cruce y Comparación con PI"):
             with st.spinner("⏳ Conectando con Plan Indicativo y auditando comportamiento de metas..."):
                 try:
@@ -288,9 +291,6 @@ if "df_indicadores_estandar" in st.session_state:
                     col_prog_2027 = None
                     col_comportamiento = None
                     
-                    # ------------------------------------------------------------
-                    # Detección inteligente y posicional de columnas en el PI
-                    # ------------------------------------------------------------
                     coincidencias_pg = []
                     for idx, col in enumerate(columnas_reales):
                         col_limpia = str(col).strip().upper().replace("Á","A").replace("É","E").replace("Í","I").replace("Ó","O").replace("Ú","U")
@@ -305,16 +305,13 @@ if "df_indicadores_estandar" in st.session_state:
                             col_val_2024 = col
                         elif "VAL ALC 2025" in col_limpia:
                             col_val_2025 = col
-                            # "2026" se encuentra inmediatamente a la derecha de "VAL ALC 2025"
                             if idx + 1 < len(columnas_reales):
                                 col_prog_2026 = columnas_reales[idx + 1]
-                            # "2027" se encuentra a la derecha de "2026"
                             if idx + 2 < len(columnas_reales):
                                 col_prog_2027 = columnas_reales[idx + 2]
                         elif "VERIFICACION DEL COMPORTAMIENTO DE META" in col_limpia or "COMPORTAMIENTO" in col_limpia:
                             col_comportamiento = col
     
-                    # Tomar la segunda coincidencia de PG 2024-2027
                     if len(coincidencias_pg) >= 2:
                         col_pg = coincidencias_pg[1]
                     elif len(coincidencias_pg) == 1:
@@ -364,7 +361,6 @@ if "df_indicadores_estandar" in st.session_state:
                         list_ejecutado_hasta_2026 = []
                         list_sugerencia_poai = []
                         
-                        # Auxiliar para conversión numérica a 2 decimales
                         def convertir_a_numero(val):
                             if pd.isna(val):
                                 return 0.0
@@ -376,7 +372,6 @@ if "df_indicadores_estandar" in st.session_state:
                             except ValueError:
                                 return 0.0
     
-                        # Auxiliar para formatear cadenas a 2 decimales
                         def formatear_valor(val):
                             if pd.isna(val):
                                 return "0.00"
@@ -473,12 +468,16 @@ if "df_indicadores_estandar" in st.session_state:
                         df_word["Sugerencia POAI 2027"] = list_sugerencia_poai
                         df_word["Resultado Validación"] = resultados_validacion
                         
+                        # Persistencia de auditoría
                         st.session_state["df_auditoria_pi_resultado"] = df_word
                         st.session_state["logs_diagnostico_pi"] = logs_diagnostico
     
                 except Exception as e:
                     st.error(f"❌ Error al ejecutar la validación con el Plan Indicativo: {e}")
     
+        # ------------------------------------------------------------
+        # 2. RENDERIZADO ÚNICO Y PERSISTENTE
+        # ------------------------------------------------------------
         if "df_auditoria_pi_resultado" in st.session_state:
             df_res_pi = st.session_state["df_auditoria_pi_resultado"]
             
@@ -524,8 +523,7 @@ if "df_indicadores_estandar" in st.session_state:
                 st.success("🎉 ¡Validación correcta! Todos los indicadores corresponden al PI y están habilitados para asignación POAI 2027.")
     else:
         st.info("💡 Primero carga el archivo Word para habilitar el cruce contra el Plan Indicativo.")
-
-
+    
     # ------------------------------------------------------------
     # RENDERIZADO PERSISTENTE DE LA AUDITORÍA PI Y SUS TABLAS
     # ------------------------------------------------------------
