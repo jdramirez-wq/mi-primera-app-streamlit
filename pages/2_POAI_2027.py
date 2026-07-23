@@ -553,7 +553,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
 else:
     st.info("💡 Carga el archivo Word en la sección principal para habilitar el cruce con Z023.")
 
-
 # ============================================================
 # GENERACIÓN DE PROMPT INTEGRADO Y ENLACES A CHATGPT / GEMINI (POAI 2027)
 # ============================================================
@@ -561,7 +560,7 @@ else:
 st.markdown("---")
 st.subheader("🤖 Generación de Prompt AI para Análisis POAI 2027")
 
-# Modificación: Verificamos la carga general del documento sin supeditarlo a la Tabla 5
+# Verificamos la carga general del documento sin supeditarlo a la Tabla 5
 if "texto_word_extraido" in st.session_state or ("df_indicadores_estandar" in st.session_state and not st.session_state["df_indicadores_estandar"].empty):
     
     # Extraer metadatos de sesión (con valores por defecto en caso de no encontrarse)
@@ -644,7 +643,7 @@ CRITERIOS DE EVALUACIÓN:
   Formato exigido por actividad: MP [código] / Producto MGA [código] / PI[código]/.../XX "[nombre]" / Fuente: [código] / Valor inicial: $ / Modificación (– / +): $ / Valor final: $
 
 REGLA ESPECIAL PARA PROYECTOS FINANCIADOS CON REGALÍAS (SGR):
-Si el proyecto indica que su fuente de financiación es el Sistema General de Regalías (SGR), omite las reglas de recursos propios y aplica strictly las siguientes directrices:
+Si el proyecto indica que su fuente de financiación es el Sistema General de Regalías (SGR), omite las reglas de recursos propios y aplica estrictamente las siguientes directrices:
 - Justificación Jurídica: Debe citar OBLIGATORIAMENTE la normatividad de Regalías (Ley 2056 de 2020) y el Decreto 1821 de 2020, omitiendo los Decretos de modificaciones presupuestales de recursos propios.
 - Justificación Técnica (Alineación Estratégica): Debe validar expresamente la alineación con el Plan Indicativo SGR. OBLIGATORIO: Verifica que el documento técnico justifique a qué Iniciativa específica, Programa y Línea Estratégica del Plan Indicativo SGR apunta el proyecto, así como las metas de producto asociadas.
 - Checklist Estricto de Soportes para SGR: Verifica y confirma explícitamente que se acompañen los siguientes anexos: Cadena de Valor (Word/PDF), MGA exportada en formato PDF, Presupuesto detallado, Archivo Excel de registro eVaplan, Oficio aclaratorio / remisorio firmado en PDF.
@@ -664,27 +663,20 @@ FORMATO DE SALIDA ESPERADO:
   * Estructura del Visto Bueno: indicar el trámite, el valor, la fuente, la meta de producto asociada (código y descripción), justificación evaluada, breve resumen de la importancia del trámite y su aporte al Plan de Desarrollo, y los documentos soporte.
   * Conclusión obligatoria: debe incluir la salvedad de que "es responsabilidad de la dependencia [Nombre Dependencia] realizar los trámites respectivos para culminar el trámite y su correcta ejecución, y que el visto bueno otorgado por la Subdirección de Ordenamiento y Desarrollo Regional se suscribe a verificar la correcta alineación de la cadena de valor del Plan de Desarrollo con la cadena de valor del proyecto, y su contribución a la implementación del Plan de Desarrollo"."""
 
-    st.markdown("##### 📝 Prompt Generado")
-    st.text_area(
-        label="Copia o revisa el prompt generado a continuación:",
-        value=prompt_poai,
-        height=320,
-        key="txt_area_prompt_poai"
-    )
+    # 📋 Paso 1: Bloque de copiado rápido
+    st.markdown("🚀 **Paso 1:** Copia el prompt generado a continuación:")
+    st.code(prompt_poai, language="markdown", wrap_lines=True)
 
-    url_chatgpt = "https://chatgpt.com/"
-    url_gemini = "https://gemini.google.com/app"
-
-    st.markdown("##### 🚀 Analizar con Inteligencia Artificial")
-    col_gpt, col_gemini, col_espacio = st.columns([1, 1, 2])
-
+    st.markdown("---")
+    
+    # 🚀 Paso 2: Botones de enlace rápido
+    st.markdown("🚀 **Paso 2:** Ve directo a la Inteligencia Artificial a pegar tu prompt:")
+    
+    col_gem, col_gpt = st.columns(2)
+    with col_gem:
+        st.link_button("🌐 Ir a Google Gemini Web", "https://gemini.google.com/", use_container_width=True, type="primary")
     with col_gpt:
-        st.link_button("🌐 Abrir en ChatGPT", url_chatgpt, use_container_width=True)
-
-    with col_gemini:
-        st.link_button("✨ Abrir en Gemini", url_gemini, use_container_width=True)
-
-    st.info("💡 **Instrucciones:** Haz clic en el botón de copiar (esquina superior derecha del cuadro del prompt) y abre la IA de tu preferencia con los botones superiores.")
+        st.link_button("💬 Ir a ChatGPT (Alternativo)", "https://chatgpt.com/", use_container_width=True)
 
 else:
     st.info("💡 Carga un archivo Word en la parte superior para generar automáticamente el prompt con los datos del proyecto.")
