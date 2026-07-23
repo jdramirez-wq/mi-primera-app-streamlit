@@ -314,14 +314,13 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     elif "VERIFICACION DEL COMPORTAMIENTO DE META" in col_limpia or "COMPORTAMIENTO" in col_limpia:
                         col_comportamiento = col
 
-                # Tomar la segunda coincidencia de PG 2024-2027 según requerimiento
+                # Tomar la segunda coincidencia de PG 2024-2027
                 if len(coincidencias_pg) >= 2:
                     col_pg = coincidencias_pg[1]
                 elif len(coincidencias_pg) == 1:
                     col_pg = coincidencias_pg[0]
 
                 if col_codigo_mp and col_indicador_drive:
-                    # Diccionarios de datos extraídos desde el PI
                     dict_pi_datos = {}
                     
                     for _, fila in df_drive.iterrows():
@@ -332,7 +331,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                             ind_pi_raw = str(fila[col_indicador_drive]).strip() if pd.notna(fila[col_indicador_drive]) else "S/N"
                             cod_prod_pi = extraer_codigo_numerico(ind_pi_raw)
                             
-                            # Lectura de campos cuantitativos del PI
                             val_pg = fila[col_pg] if col_pg and pd.notna(fila[col_pg]) else 0.0
                             val_2024 = fila[col_val_2024] if col_val_2024 and pd.notna(fila[col_val_2024]) else "NP"
                             val_2025 = fila[col_val_2025] if col_val_2025 and pd.notna(fila[col_val_2025]) else "NP"
@@ -357,7 +355,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     codigos_word_extraidos = []
                     codigos_pi_extraidos = []
                     
-                    # Nuevas columnas a generar
                     list_pg = []
                     list_2024 = []
                     list_2025 = []
@@ -367,7 +364,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     list_ejecutado_hasta_2026 = []
                     list_sugerencia_poai = []
                     
-                    # Función auxiliar para convertir valores (manejando 'NP' o textos)
+                    # Función auxiliar para convertir valores a float con 2 decimales
                     def convertir_a_numero(val):
                         if pd.isna(val):
                             return 0.0
@@ -375,9 +372,22 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         if val_str in ["NP", "N/A", "S/D", ""]:
                             return 0.0
                         try:
-                            return float(val_str)
+                            return round(float(val_str), 2)
                         except ValueError:
                             return 0.0
+
+                    # Función auxiliar para formatear valores visuales respetando 'NP' o aplicando 2 decimales
+                    def formatear_valor(val):
+                        if pd.isna(val):
+                            return "0.00"
+                        val_str = str(val).strip().upper()
+                        if val_str in ["NP", "N/A", "S/D"]:
+                            return val_str
+                        try:
+                            num = float(val_str.replace(",", "."))
+                            return f"{num:.2f}"
+                        except ValueError:
+                            return val_str
 
                     for i, fila_word in df_word.iterrows():
                         mp_word_raw = fila_word.get("Código MP", "")
@@ -398,7 +408,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                             list_2026.append("N/A")
                             list_2027.append("N/A")
                             list_comportamiento.append("N/A")
-                            list_ejecutado_hasta_2026.append(0.0)
+                            list_ejecutado_hasta_2026.append("0.00")
                             list_sugerencia_poai.append("⚠️ Revisar MP")
                             logs_diagnostico.append(f"❌ Fila {i}: La meta '{mp_word_raw}' no se encontró en el PI.")
                         else:
@@ -410,7 +420,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                             codigos_pi_extraidos.append(cod_prod_pi if cod_prod_pi else "No detectado")
                             textos_pi_encontrados.append(texto_pi)
                             
-                            # Asignar valores del PI
                             pg_val = datos_meta["pg"]
                             v_2024 = datos_meta["val_2024"]
                             v_2025 = datos_meta["val_2025"]
@@ -418,18 +427,23 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                             v_2027 = datos_meta["prog_2027"]
                             comp_val = datos_meta["comportamiento"]
                             
-                            list_pg.append(pg_val)
-                            list_2024.append(v_2024)
-                            list_2025.append(v_2025)
-                            list_2026.append(v_2026)
-                            list_2027.append(v_2027)
+                            # Formateo a 2 decimales para la visualización en tabla
+                            list_pg.append(formatear_valor(pg_val))
+                            list_2024.append(formatear_valor(v_2024))
+                            list_2025.append(formatear_valor(v_2025))
+                            list_2026.append(formatear_valor(v_2026))
+                            list_2027.append(formatear_valor(v_2027))
                             list_comportamiento.append(comp_val)
                             
-                            # 🧮 Suma acumulada hasta 2026 (ignorando textos 'NP')
-                            suma_2026 = convertir_a_numero(v_2024) + convertir_a_numero(v_2025) + convertir_a_numero(v_2026)
+                            # 🧮 Suma acumulada con precisión de 2 decimales
+                            num_2024 = convertir_a_numero(v_2024)
+                            num_2025 = convertir_a_numero(v_2025)
+                            num_2026 = convertir_a_numero(v_2026)
+                            
+                            suma_2026 = round(num_2024 + num_2025 + num_2026, 2)
                             pg_num = convertir_a_numero(pg_val)
                             
-                            list_ejecutado_hasta_2026.append(suma_2026)
+                            list_ejecutado_hasta_2026.append(f"{suma_2026:.2f}")
                             
                             # 🎯 Regla de Negocio: Evaluación de Sugerencia POAI 2027
                             if comp_val == "ACUMULADO":
@@ -442,7 +456,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                                 
                             list_sugerencia_poai.append(sugerencia)
                             
-                            # Validación de coincidencia de código de producto
                             if cod_prod_word and cod_prod_pi and cod_prod_word == cod_prod_pi:
                                 resultados_validacion.append("🟢 Corresponde al PI")
                                 logs_diagnostico.append(f"✅ Fila {i} (Llave MP: {mp_llave_word}): Coincidencia exacta de indicador.")
@@ -464,12 +477,61 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     df_word["Sugerencia POAI 2027"] = list_sugerencia_poai
                     df_word["Resultado Validación"] = resultados_validacion
                     
-                    # Persistencia en sesión
                     st.session_state["df_auditoria_pi_resultado"] = df_word
                     st.session_state["logs_diagnostico_pi"] = logs_diagnostico
 
             except Exception as e:
                 st.error(f"❌ Error al ejecutar la validación con el Plan Indicativo: {e}")
+
+    # ------------------------------------------------------------
+    # RENDERIZADO PERSISTENTE DE LA AUDITORÍA PI Y SUS TABLAS
+    # ------------------------------------------------------------
+    if "df_auditoria_pi_resultado" in st.session_state:
+        df_res_pi = st.session_state["df_auditoria_pi_resultado"]
+        
+        st.warning("🛠️ **Consola de Diagnóstico: Comparación Indicador de Producto (Word) vs. PI**")
+        with st.expander("👁️ Ver trazabilidad del cruce con el Plan Indicativo", expanded=False):
+            st.code("\n".join(st.session_state.get("logs_diagnostico_pi", [])), language="text")
+            
+        def color_semaforo(val):
+            val_str = str(val)
+            if "🟢" in val_str:
+                return "background-color: #d4edda; color: #155724; font-weight: bold;"
+            elif "🔴" in val_str:
+                return "background-color: #f8d7da; color: #721c24; font-weight: bold;"
+            return "background-color: #fff3cd; color: #856404; font-weight: bold;"
+
+        df_final_render = df_res_pi[[
+            "Código MP", 
+            "Cod Indicador Word",
+            "Cod Indicador PI",
+            "Resultado Validación",
+            "PG 2024-2027",
+            "VAL ALC 2024",
+            "VAL ALC 2025",
+            "2026",
+            "Acumulado a 2026",
+            "2027",
+            "COMPORTAMIENTO",
+            "Sugerencia POAI 2027"
+        ]].copy()
+        
+        st.markdown("##### 📈 Reporte de Inconsistencias y Regla de Cumplimiento de Metas PI")
+        st.dataframe(
+            df_final_render.style.map(color_semaforo, subset=["Resultado Validación", "Sugerencia POAI 2027"]),
+            use_container_width=True
+        )
+        
+        conteo_alertas = df_res_pi["Resultado Validación"].str.contains("🔴").sum()
+        conteo_meta_cumplida = df_res_pi["Sugerencia POAI 2027"].str.contains("🔴 Meta Cumplida").sum()
+        
+        if conteo_alertas > 0 or conteo_meta_cumplida > 0:
+            st.error(f"⚠️ Se detectaron {conteo_alertas} discordancias de código y {conteo_meta_cumplida} meta(s) que ya alcanzaron cumplimiento antes de 2027.")
+        else:
+            st.success("🎉 ¡Validación correcta! Todos los indicadores corresponden al PI y están habilitados para asignación POAI 2027.")
+else:
+    st.info("💡 Primero carga el archivo Word para habilitar el cruce contra el Plan Indicativo.")
+    
 
     # ------------------------------------------------------------
     # RENDERIZADO PERSISTENTE DE LA AUDITORÍA PI Y SUS TABLAS
