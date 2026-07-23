@@ -364,7 +364,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                     list_ejecutado_hasta_2026 = []
                     list_sugerencia_poai = []
                     
-                    # Función auxiliar para convertir valores a float con 2 decimales
+                    # Auxiliar para conversión numérica a 2 decimales
                     def convertir_a_numero(val):
                         if pd.isna(val):
                             return 0.0
@@ -376,7 +376,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                         except ValueError:
                             return 0.0
 
-                    # Función auxiliar para formatear valores visuales respetando 'NP' o aplicando 2 decimales
+                    # Auxiliar para formatear cadenas a 2 decimales
                     def formatear_valor(val):
                         if pd.isna(val):
                             return "0.00"
@@ -427,7 +427,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                             v_2027 = datos_meta["prog_2027"]
                             comp_val = datos_meta["comportamiento"]
                             
-                            # Formateo a 2 decimales para la visualización en tabla
                             list_pg.append(formatear_valor(pg_val))
                             list_2024.append(formatear_valor(v_2024))
                             list_2025.append(formatear_valor(v_2025))
@@ -435,7 +434,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                             list_2027.append(formatear_valor(v_2027))
                             list_comportamiento.append(comp_val)
                             
-                            # 🧮 Suma acumulada con precisión de 2 decimales
                             num_2024 = convertir_a_numero(v_2024)
                             num_2025 = convertir_a_numero(v_2025)
                             num_2026 = convertir_a_numero(v_2026)
@@ -445,7 +443,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                             
                             list_ejecutado_hasta_2026.append(f"{suma_2026:.2f}")
                             
-                            # 🎯 Regla de Negocio: Evaluación de Sugerencia POAI 2027
                             if comp_val == "ACUMULADO":
                                 if suma_2026 < pg_num:
                                     sugerencia = "🟢 Se sugiere Programación"
@@ -463,7 +460,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
                                 resultados_validacion.append("🔴 Código no coincide")
                                 logs_diagnostico.append(f"❌ Fila {i} (Llave MP: {mp_llave_word}): Discrepancia. Word: '{cod_prod_word}' vs PI: '{cod_prod_pi}'.")
 
-                    # Asignación de columnas al DataFrame resultado
                     df_word["Cod Indicador Word"] = codigos_word_extraidos
                     df_word["Cod Indicador PI"] = codigos_pi_extraidos
                     df_word["Indicador en PI"] = textos_pi_encontrados
@@ -483,9 +479,6 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
             except Exception as e:
                 st.error(f"❌ Error al ejecutar la validación con el Plan Indicativo: {e}")
 
-    # ------------------------------------------------------------
-    # RENDERIZADO PERSISTENTE DE LA AUDITORÍA PI Y SUS TABLAS
-    # ------------------------------------------------------------
     if "df_auditoria_pi_resultado" in st.session_state:
         df_res_pi = st.session_state["df_auditoria_pi_resultado"]
         
@@ -531,7 +524,7 @@ if "df_indicadores_estandar" in st.session_state and not st.session_state["df_in
             st.success("🎉 ¡Validación correcta! Todos los indicadores corresponden al PI y están habilitados para asignación POAI 2027.")
 else:
     st.info("💡 Primero carga el archivo Word para habilitar el cruce contra el Plan Indicativo.")
-    
+
 
     # ------------------------------------------------------------
     # RENDERIZADO PERSISTENTE DE LA AUDITORÍA PI Y SUS TABLAS
