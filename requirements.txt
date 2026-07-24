@@ -1,7 +1,10 @@
 streamlit
 pandas
-openpyxl
 reportlab
 numpy
+openpyxl
 python-docx
 pdfplumber
+pytesseract
+pdf2image
+Pillow
