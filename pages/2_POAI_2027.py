@@ -1,6 +1,5 @@
 import re
 import docx
-import fitz  # PyMuPDF para lectura de PDF
 import pandas as pd
 import streamlit as st
 
@@ -40,26 +39,16 @@ def leer_plan_indicativo_drive(url_excel):
 
 
 # ============================================================
-# FUNCIONES EXTRACTORAS: ARCHIVO PDF (MGA DNP)
+# FUNCIONES EXTRACTORAS: PARSER MGA DESDE TEXTO/PDF
 # ============================================================
-def extraer_productos_mga(pdf_bytes: bytes) -> pd.DataFrame:
-    """Extrae la tabla jerárquica de Objetivos, Productos, Indicadores MGA y Meta Total
-
-    desde un archivo PDF exportado de la plataforma MGA DNP.
-    """
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    texto_completo = ""
-
-    for pagina in doc:
-        texto_completo += pagina.get_text("text") + "\n"
-
-    # Restringir la búsqueda al bloque de "Indicadores de producto"
+def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
+    """Procesa el texto extraído del reporte MGA DNP y recupera la estructura jerárquica de Indicadores."""
     if "Indicadores de producto" in texto_completo:
         bloque_interes = texto_completo.split("Indicadores de producto")[-1]
     else:
         bloque_interes = texto_completo
 
-    # Patrón Regex para capturar la jerarquía completa por objetivo
+    # Patrón Regex para capturar Objetivo -> Producto -> Indicador MGA -> Meta Total
     patron_objetivo = re.compile(
         r"(\d{2}\s+Objetivo\s+\d+)\n\s*(\d+\.\s+[^\n]+)\n\s*Producto\n\s*(\d+\.\d+\.\s+[^\n]+)\n\s*Indicador\n\s*(\d+\.\d+\.\d+\s+[^\n]+).*?Meta total:\s*([\d\.,]+)",
         re.DOTALL,
@@ -84,7 +73,7 @@ def extraer_productos_mga(pdf_bytes: bytes) -> pd.DataFrame:
 
 
 # ============================================================
-# FUNCIONES EXTRACTORAS: ARCHIVO WORD (DOCX)
+# FUNCIONES EXTRACTORAS: ARCHIVO WORD (PYTHON-DOCX)
 # ============================================================
 def extraer_texto_y_tablas_docx(file_buffer) -> str:
     """Lee el archivo .docx y lo convierte en texto plano estructurado por bloques."""
@@ -399,21 +388,21 @@ def procesar_tablas_estandar(texto_bruto: str):
 
 
 # ============================================================
-# INTERFAZ DE USUARIOS Y NAVEGACIÓN
+# INTERFAZ DE USUARIOS Y NAVEGACIÓN STREAMLIT
 # ============================================================
 st.title("📐 Control Previo y Revisión Técnica de Proyectos")
 st.write(
-    "Módulo integral para el análisis de Cadenas de Valor (.docx) y Reportes MGA DNP (.pdf)."
+    "Módulo integral para el análisis de Cadenas de Valor (.docx) y Reportes MGA DNP."
 )
 st.markdown("---")
 
 tab_cv, tab_mga = st.tabs([
     "📄 Cadena de Valor (DOCX)",
-    "📑 Reporte MGA DNP (PDF)",
+    "📑 Reporte MGA DNP (Texto / PDF)",
 ])
 
 # ------------------------------------------------------------
-# TAB 1: CADENA DE VALOR (WORD)
+# TAB 1: CADENA DE VALOR (PYTHON-DOCX)
 # ------------------------------------------------------------
 with tab_cv:
     st.subheader("Carga y Procesamiento de Cadena de Valor (.docx)")
@@ -498,45 +487,34 @@ with tab_cv:
             st.warning("No se detectaron actividades presupuestales en la Tabla 5.")
 
 # ------------------------------------------------------------
-# TAB 2: EXTRACTION PDF MGA (DNP)
+# TAB 2: EXTRACCIÓN MGA (PROCESAMIENTO DE TEXTO DE REPORTE)
 # ------------------------------------------------------------
 with tab_mga:
-    st.subheader("📑 Extractor de Productos e Indicadores MGA (PDF)")
-    archivo_pdf = st.file_uploader(
-        "📂 Sube aquí la exportación oficial en PDF de la MGA DNP",
-        type=["pdf"],
-        key="uploader_pdf",
+    st.subheader("📑 Parseador de Productos e Indicadores MGA")
+    st.write(
+        "Pega directamente el texto copiado de la sección **Programación / Indicadores de Producto** del reporte oficial de la MGA:"
     )
 
-    if archivo_pdf is not None:
-        if (
-            "ultimo_archivo_pdf" not in st.session_state
-            or st.session_state["ultimo_archivo_pdf"] != archivo_pdf.name
-        ):
-            with st.spinner("⏳ Procesando la estructura técnica del PDF MGA..."):
-                try:
-                    bytes_data = archivo_pdf.getvalue()
-                    df_mga = extraer_productos_mga(bytes_data)
+    texto_mga_input = st.text_area(
+        "Texto extraído del reporte MGA:", height=200
+    )
 
-                    st.session_state["df_mga_productos"] = df_mga
-                    st.session_state["ultimo_archivo_pdf"] = archivo_pdf.name
-                    st.success("✅ ¡PDF MGA analizado correctamente!")
-                except Exception as e:
-                    st.error(f"🚨 Error al leer la MGA PDF: {e}")
-
-    # RENDERIZADO DE RESULTADOS MGA
-    if "df_mga_productos" in st.session_state:
-        df_mga = st.session_state["df_mga_productos"]
-        if not df_mga.empty:
-            st.success(
-                f"Se extrajeron **{len(df_mga)}** indicador(es) del reporte MGA."
-            )
-            st.dataframe(df_mga, use_container_width=True)
+    if st.button("Procesar Texto MGA"):
+        if texto_mga_input.strip():
+            df_mga = extraer_productos_mga_texto(texto_mga_input)
+            if not df_mga.empty:
+                st.success(
+                    f"Se extrajeron **{len(df_mga)}** indicador(es) del reporte MGA."
+                )
+                st.dataframe(df_mga, use_container_width=True)
+                st.session_state["df_mga_productos"] = df_mga
+            else:
+                st.warning(
+                    "No se pudo identificar el patrón de objetivos e indicadores en el texto ingresado."
+                )
         else:
-            st.warning(
-                "No se detectó la estructura de Indicadores de Producto en el documento cargado."
-            )
-
+            st.info("Por favor ingresa texto para procesar.")
+            
 # ============================================================
 # COMPONENTE DE AUDITORÍA: WORD VS. PLAN INDICATIVO (PI)
 # ============================================================
