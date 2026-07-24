@@ -37,77 +37,128 @@ def leer_plan_indicativo_drive(url_excel):
 
 
 # ============================================================
-# NUEVA ESTRATEGIA: PARSER MGA POR PATRONES / BLOQUES
+# ESTRATEGIA DE RECORTE Y EXTRACCIÓN MGA POR PÁGINAS
 # ============================================================
-def extraer_texto_de_pdf(pdf_buffer) -> str:
-    """Extrae todo el texto plano contenido en el archivo PDF cargado."""
-    paginas_texto = []
-    with pdfplumber.open(pdf_buffer) as pdf:
-        for pagina in pdf.pages:
-            t = pagina.extract_text()
-            if t:
-                paginas_texto.append(t)
-    return "\n".join(paginas_texto)
+def extraer_texto_desde_seccion(
+    pdf_buffer, clave_inicio="Indicadores de producto"
+):
+    """Localiza la primera página que contiene 'clave_inicio' y extrae el texto de
 
-
-def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
-    """NUEVA ESTRATEGIA: Extrae los indicadores delimitando la sección principal
-
-    y parseando los bloques con Regex en lugar de depender de banderas de estado
-    línea por línea.
+    esa página en adelante, devolviendo también el número de página inicial y
+    el total.
     """
-    # 1. Delimitar la sección global de "Indicadores de producto"
-    patron_seccion = re.compile(
-        r"(Programación\s*/\s*Indicadores de producto|Indicadores de producto)(.*?)(?=Programación\s*/\s*Indicadores de gestión|Fuentes de financiación|$)",
-        re.DOTALL | re.IGNORECASE,
-    )
-    match_seccion = patron_seccion.search(texto_completo)
+    texto_filtrado = ""
+    pagina_inicio = None
+    total_paginas = 0
 
-    if not match_seccion:
-        return pd.DataFrame()
+    with pdfplumber.open(pdf_buffer) as pdf:
+        total_paginas = len(pdf.pages)
 
-    bloque_indicadores = match_seccion.group(2)
+        for num_pag, pagina in enumerate(pdf.pages, start=1):
+            texto_pag = pagina.extract_text() or ""
 
-    # 2. Partir por Objetivos específicos (Ej: "01 Objetivo 1 ...", "02 Objetivo 2 ...")
-    patron_objetivos = re.compile(
-        r"(^\d{2}\s*Objetivo\s*\d+.*?)(?=(^\d{2}\s*Objetivo\s*\d+)|$)",
-        re.MULTILINE | re.DOTALL | re.IGNORECASE,
-    )
-    bloques_obj = patron_objetivos.findall(bloque_indicadores)
+            # Si aún no encontramos la página de inicio, la buscamos
+            if pagina_inicio is None:
+                if clave_inicio.lower() in texto_pag.lower():
+                    pagina_inicio = num_pag
 
+            # Si ya identificamos la página de inicio, acumulamos el texto
+            if pagina_inicio is not None:
+                texto_filtrado += f"\n--- PÁGINA {num_pag} ---\n" + texto_pag
+
+    return texto_filtrado, pagina_inicio, total_paginas
+
+
+def extraer_productos_mga_texto(texto_recortado: str) -> pd.DataFrame:
+    """Procesa el texto recortado de la MGA para estructurar la tabla de Objetivos,
+
+    Productos e Indicadores.
+    """
+    lineas = texto_recortado.splitlines()
     registros = []
 
-    for obj_match in bloques_obj:
-        texto_obj = obj_match[0]
+    en_seccion_indicadores = True  # Ya viene recortado desde la página clave
+    obj_actual_codigo = ""
+    obj_actual_desc = ""
+    prod_actual = ""
 
-        # Extraer línea del objetivo
-        lineas_obj = [l.strip() for l in texto_obj.splitlines() if l.strip()]
-        if not lineas_obj:
+    ind_codigo_texto = ""
+    meta_total = ""
+
+    esperando_desc_obj = False
+    esperando_producto = False
+    esperando_indicador = False
+
+    for linea in lineas:
+        l = linea.strip()
+        if not l or l.startswith("--- PÁGINA"):
             continue
 
-        codigo_obj = lineas_obj[0]
-        desc_obj = lineas_obj[1] if len(lineas_obj) > 1 else ""
-        objetivo_completo = f"{codigo_obj} - {desc_obj}".strip()
+        # Frenar la extracción si se llega a secciones posteriores del reporte MGA
+        if (
+            "Programación / Indicadores de gestión" in l
+            or "Fuentes de financiación" in l
+        ):
+            en_seccion_indicadores = False
 
-        # 3. Partir las entradas de indicadores/productos dentro del bloque del objetivo
-        # Busca el patrón estandarizado: Producto -> Nombre -> Indicador -> Nombre -> Meta Total
-        patron_bloque_ind = re.compile(
-            r"Producto\s*\n\s*(.*?)\s*\n\s*Indicador\s*\n\s*(.*?)\s*\n.*?Meta total:\s*([^\n]+)",
-            re.DOTALL | re.IGNORECASE,
-        )
+        if not en_seccion_indicadores:
+            break
 
-        for m in patron_bloque_ind.finditer(texto_obj):
-            prod = m.group(1).replace("\n", " ").strip()
-            ind = m.group(2).replace("\n", " ").strip()
-            meta = m.group(3).strip()
+        # Captura de Objetivo
+        match_obj = re.match(r"^(\d{2}\s*Objetivo\s*\d+)", l, re.IGNORECASE)
+        if match_obj:
+            obj_actual_codigo = match_obj.group(1).strip()
+            esperando_desc_obj = True
+            prod_actual = ""
+            continue
 
-            registros.append({
-                "No.": len(registros) + 1,
-                "Objetivo específico": objetivo_completo,
-                "Producto": prod,
-                "Indicador MGA": ind,
-                "Meta total": meta,
-            })
+        if esperando_desc_obj:
+            obj_actual_desc = l
+            esperando_desc_obj = False
+            continue
+
+        # Captura de Producto
+        if l.lower() == "producto":
+            esperando_producto = True
+            continue
+
+        if esperando_producto:
+            prod_actual = l
+            esperando_producto = False
+            continue
+
+        # Captura de Indicador
+        if l.lower() == "indicador":
+            esperando_indicador = True
+            continue
+
+        if esperando_indicador:
+            ind_codigo_texto = l
+            esperando_indicador = False
+            continue
+
+        # Captura de Meta Total
+        if l.lower().startswith("meta total:"):
+            partes_meta = l.split(":", 1)
+            if len(partes_meta) > 1:
+                meta_total = partes_meta[1].strip()
+            continue
+
+        # Cierre del registro por cada bloque
+        if "Programación de indicadores" in l:
+            if ind_codigo_texto:
+                registros.append({
+                    "No.": len(registros) + 1,
+                    "Objetivo específico": (
+                        f"{obj_actual_codigo} - {obj_actual_desc}".strip()
+                    ),
+                    "Producto": prod_actual,
+                    "Indicador MGA": ind_codigo_texto,
+                    "Meta total": meta_total,
+                })
+                ind_codigo_texto = ""
+                meta_total = ""
+            continue
 
     return pd.DataFrame(registros)
 
@@ -394,13 +445,13 @@ with tab_cv:
         else:
             st.warning("No se detectaron actividades presupuestales en la Tabla 5.")
 
-# TAB 2: REPORTE MGA (PDF)
+# TAB 2: REPORTE MGA (PDF) - ESTRATEGIA DE RECORTE POR PÁGINA
 with tab_mga:
-    st.subheader("📑 Resumen Ejecutivo MGA DNP (Objetivos, Productos y Metas)")
+    st.subheader("📑 Visor y Extractor de Texto MGA DNP")
     archivo_pdf = st.file_uploader(
         "📂 Sube el archivo PDF del reporte MGA DNP",
         type=["pdf"],
-        key="uploader_pdf",
+        key="uploader_pdf_directo",
     )
 
     if archivo_pdf is not None:
@@ -408,46 +459,91 @@ with tab_mga:
             "ultimo_archivo_pdf" not in st.session_state
             or st.session_state["ultimo_archivo_pdf"] != archivo_pdf.name
         ):
-            with st.spinner("⏳ Extrayendo datos y consolidando la tabla resumen..."):
+            with st.spinner(
+                "🔍 Localizando la sección 'Indicadores de producto' y extrayendo texto..."
+            ):
                 try:
-                    texto_pdf = extraer_texto_de_pdf(archivo_pdf)
-                    st.session_state["texto_pdf_extraido"] = texto_pdf
+                    (
+                        texto_seccion,
+                        pag_inicio,
+                        total_pags,
+                    ) = extraer_texto_desde_seccion(
+                        archivo_pdf, clave_inicio="Indicadores de producto"
+                    )
 
-                    df_mga = extraer_productos_mga_texto(texto_pdf)
-                    st.session_state["df_mga_productos"] = df_mga
+                    st.session_state["texto_mga_seccion"] = texto_seccion
+                    st.session_state["pag_inicio_mga"] = pag_inicio
+                    st.session_state["total_pags_mga"] = total_pags
+
+                    # Estructurar Dataframe a partir del texto recortado
+                    if pag_inicio:
+                        df_mga = extraer_productos_mga_texto(texto_seccion)
+                        st.session_state["df_mga_productos"] = df_mga
+                    else:
+                        st.session_state["df_mga_productos"] = pd.DataFrame()
+
                     st.session_state["ultimo_archivo_pdf"] = archivo_pdf.name
-                    st.success("✅ ¡Reporte MGA analizado correctamente!")
                 except Exception as e:
                     st.error(f"🚨 Ocurrió un error al procesar el PDF MGA: {e}")
 
-    if "df_mga_productos" in st.session_state:
-        df_mga = st.session_state["df_mga_productos"]
+    if "texto_mga_seccion" in st.session_state:
+        pag_inicio = st.session_state.get("pag_inicio_mga")
+        total_pags = st.session_state.get("total_pags_mga")
+        texto_seccion = st.session_state.get("texto_mga_seccion", "")
 
-        if not df_mga.empty:
-            st.markdown("### 📋 Tabla Resumen: Objetivos Específicos, Productos, Indicadores y Metas MGA")
-            st.write(f"Se estructuraron exitosamente **{len(df_mga)}** registro(s) de la MGA:")
-
-            st.dataframe(
-                df_mga,
-                use_container_width=True,
-                hide_index=True,
+        if pag_inicio:
+            st.success(
+                f"✅ ¡Sección detectada! Mostrando contenido desde la **Página {pag_inicio}** de {total_pags}."
             )
 
-            csv_mga = df_mga.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label="📥 Descargar Tabla MGA en CSV",
-                data=csv_mga,
-                file_name="resumen_mga_productos.csv",
-                mime="text/csv",
-            )
-        else:
-            st.warning("No se detectó la sección estándar de 'Indicadores de producto' en el PDF subido.")
+            # Mostrar Matriz Estructurada (Dataframe)
+            df_mga = st.session_state.get("df_mga_productos", pd.DataFrame())
+            if not df_mga.empty:
+                st.markdown("### 📋 Tabla Resumen Extraída de la MGA")
+                st.dataframe(df_mga, use_container_width=True, hide_index=True)
 
-        with st.expander("🔍 Inspeccionar Texto Plano Extraído del PDF"):
+                csv_mga = df_mga.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    label="📥 Descargar Tabla MGA en CSV",
+                    data=csv_mga,
+                    file_name="resumen_mga_productos.csv",
+                    mime="text/csv",
+                )
+
+            # Visor y Descarga de Texto Plano Recortado
+            st.markdown("### 📝 Texto Extraído (Desde 'Indicadores de Producto')")
+            st.caption(
+                "Copia este texto plano directamente o úsalo como insumo para alimentarlo a tu prompt."
+            )
+
             st.text_area(
-                "Contenido bruto del PDF MGA:",
-                st.session_state.get("texto_pdf_extraido", ""),
-                height=250,
+                label="Contenido plano recortado:",
+                value=texto_seccion,
+                height=400,
+                key="txt_mga_recortado",
+            )
+
+            st.download_button(
+                label="📥 Descargar Texto Plano (.txt)",
+                data=texto_seccion,
+                file_name="indicadores_producto_mga.txt",
+                mime="text/plain",
+            )
+
+        else:
+            st.warning(
+                "⚠️ No se encontró la frase 'Indicadores de producto' en ninguna página del PDF. "
+                "A continuación se muestra el texto completo sin recortar:"
+            )
+            with pdfplumber.open(archivo_pdf) as pdf:
+                texto_completo = "\n".join(
+                    [p.extract_text() or "" for p in pdf.pages]
+                )
+
+            st.text_area(
+                label="Texto Completo del PDF:",
+                value=texto_completo,
+                height=400,
             )
             
 # ============================================================
