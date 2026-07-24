@@ -20,9 +20,9 @@ URL_DRIVE_EXCEL = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtK
 # FUNCIONES AUXILIARES Y DE CACHÉ
 # ============================================================
 def extraer_codigo_numerico(texto, prefijo=""):
-    """Aísla la secuencia numérica de un texto (por ejemplo, 'MP24 - Nombre' -> '24').
+    """Aísla la secuencia numérica de un texto (ej.
 
-    Si se pasa un prefijo (ej. 'V'), devuelve 'V24'.
+    'MP24 - Nombre' -> '24'). Si se pasa un prefijo (ej. 'V'), devuelve 'V24'.
     """
     if pd.isna(texto) or str(texto).strip().lower() == "nan":
         return ""
@@ -54,12 +54,13 @@ def extraer_texto_de_pdf(pdf_buffer) -> str:
 
 
 def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
-    """Procesa el texto extraído del reporte MGA DNP y recupera la estructura jerárquica de Indicadores."""
+    """Procesa el texto extraído de la MGA y genera la Tabla Resumen Ejecutiva de Objetivos, Productos, Indicadores y Metas."""
     if "Indicadores de producto" in texto_completo:
         bloque_interes = texto_completo.split("Indicadores de producto")[-1]
     else:
         bloque_interes = texto_completo
 
+    # Patrón robusto para capturar el bloque jerárquico MGA
     patron_objetivo = re.compile(
         r"(\d{2}\s+Objetivo\s+\d+)\n\s*(\d+\.\s+[^\n]+)\n\s*Producto\n\s*(\d+\.\d+\.\s+[^\n]+)\n\s*Indicador\n\s*(\d+\.\d+\.\d+\s+[^\n]+).*?Meta total:\s*([\d\.,]+)",
         re.DOTALL,
@@ -68,16 +69,17 @@ def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
     registros = []
     coincidencias = patron_objetivo.findall(bloque_interes)
 
-    for match in coincidencias:
+    for idx, match in enumerate(coincidencias, 1):
         num_obj_raw, desc_obj, prod_raw, ind_raw, meta_raw = match
         codigo_obj = num_obj_raw.strip().replace("Objetivo ", "")
         obj_completo = f"{codigo_obj} - Objetivo {codigo_obj} {desc_obj.strip()}"
 
         registros.append({
-            "Objetivo específico": obj_completo,
-            "Producto": prod_raw.strip(),
+            "No.": idx,
+            "Objetivo Específico MGA": obj_completo,
+            "Producto MGA": prod_raw.strip(),
             "Indicador MGA": ind_raw.strip(),
-            "Meta total": meta_raw.strip(),
+            "Meta Total MGA": meta_raw.strip(),
         })
 
     return pd.DataFrame(registros)
@@ -496,9 +498,9 @@ with tab_cv:
 
 # TAB 2: REPORTE MGA (PDF)
 with tab_mga:
-    st.subheader("📑 Parseador de Productos e Indicadores MGA desde PDF")
+    st.subheader("📑 Resumen Ejecutivo MGA DNP (Objetivos, Productos y Metas)")
     archivo_pdf = st.file_uploader(
-        "📂 Sube aquí el reporte PDF descargado de la MGA",
+        "📂 Sube el archivo PDF del reporte MGA DNP",
         type=["pdf"],
         key="uploader_pdf",
     )
@@ -508,7 +510,7 @@ with tab_mga:
             "ultimo_archivo_pdf" not in st.session_state
             or st.session_state["ultimo_archivo_pdf"] != archivo_pdf.name
         ):
-            with st.spinner("⏳ Extrayendo texto y procesando datos del PDF MGA..."):
+            with st.spinner("⏳ Extrayendo datos y consolidando la tabla resumen..."):
                 try:
                     texto_pdf = extraer_texto_de_pdf(archivo_pdf)
                     st.session_state["texto_pdf_extraido"] = texto_pdf
@@ -516,25 +518,33 @@ with tab_mga:
                     df_mga = extraer_productos_mga_texto(texto_pdf)
                     st.session_state["df_mga_productos"] = df_mga
                     st.session_state["ultimo_archivo_pdf"] = archivo_pdf.name
-                    st.success("✅ ¡PDF procesado correctamente!")
+                    st.success("✅ ¡Reporte MGA analizado correctamente!")
                 except Exception as e:
-                    st.error(f"🚨 Error en la lectura del archivo PDF: {e}")
+                    st.error(f"🚨 Ocurrió un error al procesar el PDF MGA: {e}")
 
     if "df_mga_productos" in st.session_state:
         df_mga = st.session_state["df_mga_productos"]
+        
         if not df_mga.empty:
-            st.success(
-                f"Se extrajeron **{len(df_mga)}** indicador(es) del reporte MGA."
+            st.markdown("### 📋 Tabla Resumen: Objetivos Específicos, Productos, Indicadores y Metas MGA")
+            st.write(
+                f"Se estructuraron exitosamente **{len(df_mga)}** registro(s) de la MGA:"
             )
-            st.dataframe(df_mga, use_container_width=True)
+            
+            # Muestra la tabla consolidada solicitada
+            st.dataframe(
+                df_mga, 
+                use_container_width=True,
+                hide_index=True
+            )
         else:
             st.warning(
-                "No se pudo identificar la estructura de indicadores de producto en el PDF subido."
+                "No se detectó la sección estándar de 'Indicadores de producto' en el PDF subido."
             )
 
-        with st.expander("🔍 Ver texto plano extraído del PDF"):
+        with st.expander("🔍 Inspeccionar Texto Plano Extraído del PDF"):
             st.text_area(
-                "Texto MGA",
+                "Contenido bruto del PDF MGA:",
                 st.session_state.get("texto_pdf_extraido", ""),
                 height=250,
             )
