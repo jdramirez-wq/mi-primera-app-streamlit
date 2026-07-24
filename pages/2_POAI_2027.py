@@ -67,6 +67,15 @@ def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
     if "Regionalización" in bloque_seccion:
         bloque_seccion = bloque_seccion.split("Regionalización")[0]
 
+    # Limpiar encabezados repetitivos de página/fecha que ensucian el texto entre bloques
+    bloque_seccion = re.sub(
+        r"Programación\s*/\s*Indicadores de producto", "", bloque_seccion
+    )
+    bloque_seccion = re.sub(
+        r"Impreso el \d{2}/\d{2}/\d{4}.*?\n", "", bloque_seccion
+    )
+    bloque_seccion = re.sub(r"Página \d+ de \d+", "", bloque_seccion)
+
     # 2. Localizar las posiciones de todos los inicios de objetivos (ej. "01 - Objetivo 1")
     patron_obj_header = re.compile(
         r"(\d{2}\s*-\s*Objetivo\s*\d+)", re.IGNORECASE
@@ -77,7 +86,7 @@ def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
 
     for idx, match in enumerate(coincidencias):
         inicio_bloque = match.start()
-        # El fin del bloque es el inicio del siguiente objetivo o el final del texto
+        # El fin del bloque es el inicio del siguiente objetivo o el final del texto acotado
         fin_bloque = (
             coincidencias[idx + 1].start()
             if idx + 1 < len(coincidencias)
@@ -87,10 +96,8 @@ def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
         subtexto = bloque_seccion[inicio_bloque:fin_bloque]
         cod_obj = match.group(1).strip()
 
-        # A. Extraer la Descripción del Objetivo (numeral ej. "1. Mejorar las condiciones...")
-        match_desc_obj = re.search(
-            r"\n\s*(\d+\.\s+[^\n]+)", subtexto, re.IGNORECASE
-        )
+        # A. Extraer Descripción del Objetivo (numeral ej. "1. Mejorar las condiciones...")
+        match_desc_obj = re.search(r"(\d+\.\s+[^\n]+)", subtexto)
         desc_obj = (
             match_desc_obj.group(1).strip() if match_desc_obj else ""
         )
@@ -98,25 +105,27 @@ def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
             f"{cod_obj} {desc_obj}".strip() if desc_obj else cod_obj
         )
 
-        # B. Extraer Producto (entre la palabra 'Producto' e 'Indicador')
+        # B. Extraer Producto (hasta antes de la palabra 'Indicador')
         match_producto = re.search(
-            r"Producto\s*\n\s*(\d+\.\d+\.\s+[^\n]+)",
+            r"Producto\s*[\n\r\s]+(\d+\.\d+\.\s+.*?)(?=\n\s*Indicador|\n\s*Medido|$)",
             subtexto,
-            re.IGNORECASE,
+            re.IGNORECASE | re.DOTALL,
         )
-        producto_str = (
-            match_producto.group(1).strip() if match_producto else "N/A"
-        )
+        if match_producto:
+            producto_str = " ".join(match_producto.group(1).split())
+        else:
+            producto_str = "N/A"
 
-        # C. Extraer Indicador (entre 'Indicador' y 'Medido a través de' o 'Meta total')
+        # C. Extraer Indicador (hasta antes de 'Medido a través de' o 'Meta total')
         match_indicador = re.search(
-            r"Indicador\s*\n\s*(\d+\.\d+\.\d+\s+[^\n]+)",
+            r"Indicador\s*[\n\r\s]+(\d+\.\d+\.\d+\s+.*?)(?=\n\s*Medido|\n\s*Meta total|$)",
             subtexto,
-            re.IGNORECASE,
+            re.IGNORECASE | re.DOTALL,
         )
-        indicador_str = (
-            match_indicador.group(1).strip() if match_indicador else "N/A"
-        )
+        if match_indicador:
+            indicador_str = " ".join(match_indicador.group(1).split())
+        else:
+            indicador_str = "N/A"
 
         # D. Extraer Meta Total
         match_meta = re.search(
