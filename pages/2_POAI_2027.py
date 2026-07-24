@@ -43,7 +43,6 @@ def extraer_texto_desde_seccion(
     pdf_buffer, clave_inicio="Indicadores de producto"
 ):
     """Localiza la primera página que contiene 'clave_inicio' y extrae el texto de
-
     esa página en adelante, devolviendo también el número de página inicial y
     el total.
     """
@@ -71,7 +70,6 @@ def extraer_texto_desde_seccion(
 
 def extraer_productos_mga_texto(texto_recortado: str) -> pd.DataFrame:
     """Procesa el texto recortado de la MGA para estructurar la tabla de Objetivos,
-
     Productos e Indicadores.
     """
     lineas = texto_recortado.splitlines()
@@ -363,12 +361,13 @@ def procesar_tablas_estandar(texto_bruto: str):
 # INTERFAZ STREAMLIT
 # ============================================================
 st.title("📐 Control Previo y Revisión Técnica de Proyectos")
-st.write("Módulo integral para el análisis de Cadenas de Valor (.docx) y Reportes MGA DNP (.pdf).")
+st.write("Módulo integral para el análisis de Cadenas de Valor (.docx), Reportes MGA DNP (.pdf) y Plan Indicativo (Excel).")
 st.markdown("---")
 
-tab_cv, tab_mga = st.tabs([
+tab_cv, tab_mga, tab_pi = st.tabs([
     "📄 Cadena de Valor (DOCX)",
     "📑 Reporte MGA DNP (PDF)",
+    "📊 Plan Indicativo (Drive)"
 ])
 
 # TAB 1: CADENA DE VALOR (DOCX)
@@ -545,7 +544,26 @@ with tab_mga:
                 value=texto_completo,
                 height=400,
             )
-            
+
+# TAB 3: PLAN INDICATIVO (DRIVE)
+with tab_pi:
+    st.subheader("📊 Base de Datos: Plan Indicativo (Pestaña 'MP')")
+    st.caption("Carga optimizada de la fuente oficial almacenada en Google Drive.")
+    
+    if st.button("🔄 Cargar / Recargar Plan Indicativo desde Drive"):
+        try:
+            with st.spinner("⏳ Conectando con Google Drive y leyendo pestaña 'MP'..."):
+                df_plan = leer_plan_indicativo_drive(URL_DRIVE_EXCEL)
+                st.session_state["df_plan_indicativo"] = df_plan
+                st.success("✅ ¡Plan Indicativo cargado y almacenado en caché correctamente!")
+        except Exception as e:
+            st.error(f"🚨 Error al conectar o consultar el archivo de Drive: {e}")
+
+    if "df_plan_indicativo" in st.session_state:
+        df_plan = st.session_state["df_plan_indicativo"]
+        st.markdown("#### Vista previa de los datos")
+        st.dataframe(df_plan, use_container_width=True)
+        
 # ============================================================
 # COMPONENTE DE AUDITORÍA: WORD VS. PLAN INDICATIVO (PI)
 # ============================================================
