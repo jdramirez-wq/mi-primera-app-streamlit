@@ -142,7 +142,6 @@ def procesar_mga_xml(xml_buffer) -> pd.DataFrame:
                     "Objetivo Específico": data.get("desObjetivo", data.get("Objetivo", "No detectado")),
                     "Producto MGA": data.get("ProductName", data.get("desProducto", data.get("NombreProducto", ""))),
                     "Indicador MGA": data.get("AutoIndicatorName", data.get("desIndicador", data.get("NombreIndicador", ""))),
-                    "Fuente de Verificación": data.get("VerificationSource", "No especificada"),
                     "Meta / Cantidad": data.get("Amount", data.get("Goal", data.get("valMeta", "0"))),
                 })
 
