@@ -20,10 +20,7 @@ URL_DRIVE_EXCEL = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtK
 # FUNCIONES AUXILIARES Y DE CACHÉ
 # ============================================================
 def extraer_codigo_numerico(texto, prefijo=""):
-    """Aísla la secuencia numérica de un texto (ej. 'MP24 - Nombre' -> '24').
-
-    Si se pasa un prefijo (ej. 'V'), devuelve 'V24'.
-    """
+    """Aísla la secuencia numérica de un texto (ej. 'MP24 - Nombre' -> '24')."""
     if pd.isna(texto) or str(texto).strip().lower() == "nan":
         return ""
     texto_str = str(texto).strip()
@@ -40,7 +37,7 @@ def leer_plan_indicativo_drive(url_excel):
 
 
 # ============================================================
-# FUNCIONES EXTRACTORAS: PARSER MGA DESDE PDF Y TEXTO
+# FUNCIONES EXTRACTORAS: PARSER MGA LÍNEA POR LÍNEA
 # ============================================================
 def extraer_texto_de_pdf(pdf_buffer) -> str:
     """Extrae todo el texto plano contenido en el archivo PDF cargado."""
@@ -54,91 +51,142 @@ def extraer_texto_de_pdf(pdf_buffer) -> str:
 
 
 def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
-    """Parsea el reporte MGA detectando dinámicamente cada bloque de Objetivo/Producto/Indicador/Meta.
+    """Parsea el reporte MGA línea por línea evaluando la secuencia estricta del DNP:
 
-    Garantiza la captura limpia desde el primer objetivo hasta el último.
+    Indicadores de producto -> XX - Objetivo X -> Producto -> Indicador -> Meta total -> Programación de indicadores.
     """
-    # 1. Acotar la sección entre 'Indicadores de producto' y 'Regionalización'
-    if "Indicadores de producto" in texto_completo:
-        bloque_seccion = texto_completo.split("Indicadores de producto")[-1]
-    else:
-        bloque_seccion = texto_completo
-
-    if "Regionalización" in bloque_seccion:
-        bloque_seccion = bloque_seccion.split("Regionalización")[0]
-
-    # Limpiar encabezados repetitivos de página/fecha que ensucian el texto entre bloques
-    bloque_seccion = re.sub(
-        r"Programación\s*/\s*Indicadores de producto", "", bloque_seccion
-    )
-    bloque_seccion = re.sub(
-        r"Impreso el \d{2}/\d{2}/\d{4}.*?\n", "", bloque_seccion
-    )
-    bloque_seccion = re.sub(r"Página \d+ de \d+", "", bloque_seccion)
-
-    # 2. Localizar las posiciones de todos los inicios de objetivos (ej. "01 - Objetivo 1")
-    patron_obj_header = re.compile(
-        r"(\d{2}\s*-\s*Objetivo\s*\d+)", re.IGNORECASE
-    )
-    coincidencias = list(patron_obj_header.finditer(bloque_seccion))
-
+    lineas = texto_completo.splitlines()
     registros = []
 
-    for idx, match in enumerate(coincidencias):
-        inicio_bloque = match.start()
-        # El fin del bloque es el inicio del siguiente objetivo o el final del texto acotado
-        fin_bloque = (
-            coincidencias[idx + 1].start()
-            if idx + 1 < len(coincidencias)
-            else len(bloque_seccion)
-        )
+    # Banderas y variables de estado
+    capturando_seccion = False
+    esperando_campo = None
 
-        subtexto = bloque_seccion[inicio_bloque:fin_bloque]
-        cod_obj = match.group(1).strip()
+    # Objeto temporal para ir acumulando la información del indicador actual
+    obj_actual = {
+        "codigo_obj": "",
+        "desc_obj": "",
+        "producto": "",
+        "indicador": "",
+        "meta_total": "",
+    }
 
-        # A. Extraer Descripción del Objetivo (numeral ej. "1. Mejorar las condiciones...")
-        match_desc_obj = re.search(r"(\d+\.\s+[^\n]+)", subtexto)
-        desc_obj = (
-            match_desc_obj.group(1).strip() if match_desc_obj else ""
-        )
-        objetivo_completo = (
-            f"{cod_obj} {desc_obj}".strip() if desc_obj else cod_obj
-        )
+    for linea in lineas:
+        l = linea.strip()
+        if not l:
+            continue
 
-        # B. Extraer Producto (hasta antes de la palabra 'Indicador')
-        match_producto = re.search(
-            r"Producto\s*[\n\r\s]+(\d+\.\d+\.\s+.*?)(?=\n\s*Indicador|\n\s*Medido|$)",
-            subtexto,
-            re.IGNORECASE | re.DOTALL,
-        )
-        if match_producto:
-            producto_str = " ".join(match_producto.group(1).split())
-        else:
-            producto_str = "N/A"
+        # Ignore ruido recurrente de encabezados / pies de página MGA
+        if (
+            l.startswith("Impreso el")
+            or l.startswith("Página ")
+            or "MEJORAMIENTO INTEGRAL" in l
+            or "DEPARTAMENTO DEL VALLE" in l
+        ):
+            continue
 
-        # C. Extraer Indicador (hasta antes de 'Medido a través de' o 'Meta total')
-        match_indicador = re.search(
-            r"Indicador\s*[\n\r\s]+(\d+\.\d+\.\d+\s+.*?)(?=\n\s*Medido|\n\s*Meta total|$)",
-            subtexto,
-            re.IGNORECASE | re.DOTALL,
-        )
-        if match_indicador:
-            indicador_str = " ".join(match_indicador.group(1).split())
-        else:
-            indicador_str = "N/A"
+        # 1. Detectar el inicio global de la sección
+        if "Indicadores de producto" in l and not l.startswith(
+            "Programación /"
+        ):
+            capturando_seccion = True
+            continue
 
-        # D. Extraer Meta Total
-        match_meta = re.search(
-            r"Meta total:\s*([\d\.,]+)", subtexto, re.IGNORECASE
-        )
-        meta_str = match_meta.group(1).strip() if match_meta else "N/A"
+        # 2. Si nos topamos con Regionalización o Focalización, cerramos la captura global
+        if "Programación / Regionalización" in l or "Focalización" in l:
+            capturando_seccion = False
 
+        if not capturando_seccion:
+            continue
+
+        # 3. Detectar Código del Objetivo (ej. "01 - Objetivo 1")
+        if re.match(r"^\d{2}\s*-\s*Objetivo\s*\d+", l, re.IGNORECASE):
+            # Si teníamos un objeto completo previo sin cerrar, lo guardamos
+            if obj_actual["codigo_obj"] and obj_actual["producto"]:
+                registros.append({
+                    "No.": len(registros) + 1,
+                    "Objetivo específico": (
+                        f"{obj_actual['codigo_obj']} {obj_actual['desc_obj']}".strip()
+                    ),
+                    "Producto": obj_actual["producto"],
+                    "Indicador MGA": obj_actual["indicador"],
+                    "Meta total": obj_actual["meta_total"],
+                })
+
+            # Reiniciar estructura para el nuevo objetivo
+            obj_actual = {
+                "codigo_obj": l,
+                "desc_obj": "",
+                "producto": "",
+                "indicador": "",
+                "meta_total": "",
+            }
+            esperando_campo = "DESC_OBJETIVO"
+            continue
+
+        # 4. Asignar los campos según la secuencia exacta del texto
+        if esperando_campo == "DESC_OBJETIVO":
+            obj_actual["desc_obj"] = l
+            esperando_campo = None
+            continue
+
+        if l.lower() == "producto":
+            esperando_campo = "PRODUCTO"
+            continue
+
+        if esperando_campo == "PRODUCTO":
+            obj_actual["producto"] = l
+            esperando_campo = None
+            continue
+
+        if l.lower() == "indicador":
+            esperando_campo = "INDICADOR"
+            continue
+
+        if esperando_campo == "INDICADOR":
+            obj_actual["indicador"] = l
+            esperando_campo = None
+            continue
+
+        if l.lower().startswith("meta total:"):
+            partes_meta = l.split(":")
+            if len(partes_meta) > 1:
+                obj_actual["meta_total"] = partes_meta[1].strip()
+            continue
+
+        # 5. Cierre de un indicador cuando llegamos a "Programación de indicadores"
+        if "Programación de indicadores" in l:
+            if obj_actual["codigo_obj"] and obj_actual["producto"]:
+                registros.append({
+                    "No.": len(registros) + 1,
+                    "Objetivo específico": (
+                        f"{obj_actual['codigo_obj']} {obj_actual['desc_obj']}".strip()
+                    ),
+                    "Producto": obj_actual["producto"],
+                    "Indicador MGA": obj_actual["indicador"],
+                    "Meta total": obj_actual["meta_total"],
+                })
+                # Reseteamos para evitar duplicados
+                obj_actual = {
+                    "codigo_obj": "",
+                    "desc_obj": "",
+                    "producto": "",
+                    "indicador": "",
+                    "meta_total": "",
+                }
+            esperando_campo = None
+            continue
+
+    # Guardar en caso de que quede un último registro antes del final del documento
+    if obj_actual["codigo_obj"] and obj_actual["producto"]:
         registros.append({
-            "No.": idx + 1,
-            "Objetivo específico": objetivo_completo,
-            "Producto": producto_str,
-            "Indicador MGA": indicador_str,
-            "Meta total": meta_str,
+            "No.": len(registros) + 1,
+            "Objetivo específico": (
+                f"{obj_actual['codigo_obj']} {obj_actual['desc_obj']}".strip()
+            ),
+            "Producto": obj_actual["producto"],
+            "Indicador MGA": obj_actual["indicador"],
+            "Meta total": obj_actual["meta_total"],
         })
 
     return pd.DataFrame(registros)
@@ -616,7 +664,7 @@ with tab_mga:
                 st.session_state.get("texto_pdf_extraido", ""),
                 height=250,
             )
-
+            
 # ============================================================
 # COMPONENTE DE AUDITORÍA: WORD VS. PLAN INDICATIVO (PI)
 # ============================================================
