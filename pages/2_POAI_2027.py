@@ -20,9 +20,9 @@ URL_DRIVE_EXCEL = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtK
 # FUNCIONES AUXILIARES Y DE CACHÉ
 # ============================================================
 def extraer_codigo_numerico(texto, prefijo=""):
-    """Aísla la secuencia numérica de un texto (ej.
+    """Aísla la secuencia numérica de un texto (ej. 'MP24 - Nombre' -> '24').
 
-    'MP24 - Nombre' -> '24'). Si se pasa un prefijo (ej. 'V'), devuelve 'V24'.
+    Si se pasa un prefijo (ej. 'V'), devuelve 'V24'.
     """
     if pd.isna(texto) or str(texto).strip().lower() == "nan":
         return ""
@@ -54,11 +54,11 @@ def extraer_texto_de_pdf(pdf_buffer) -> str:
 
 
 def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
-    """Parsea el reporte MGA separando por bloques de Objetivo/Producto.
+    """Parsea el reporte MGA detectando dinámicamente cada bloque de Objetivo/Producto/Indicador/Meta.
 
-    Inmune a encabezados de página, fechas impresas y saltos de línea.
+    Garantiza la captura limpia desde el primer objetivo hasta el último.
     """
-    # 1. Acotar la sección relevante entre 'Indicadores de producto' y 'Regionalización'
+    # 1. Acotar la sección entre 'Indicadores de producto' y 'Regionalización'
     if "Indicadores de producto" in texto_completo:
         bloque_seccion = texto_completo.split("Indicadores de producto")[-1]
     else:
@@ -67,44 +67,51 @@ def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
     if "Regionalización" in bloque_seccion:
         bloque_seccion = bloque_seccion.split("Regionalización")[0]
 
-    # 2. Dividir por patrones de Objetivo: e.g. "01 - Objetivo 1", "02 - Objetivo 2"
-    patron_corte_obj = r"(\d{2}\s*-\s*Objetivo\s*\d+)"
-    partes = re.split(patron_corte_obj, bloque_seccion)
+    # 2. Localizar las posiciones de todos los inicios de objetivos (ej. "01 - Objetivo 1")
+    patron_obj_header = re.compile(
+        r"(\d{2}\s*-\s*Objetivo\s*\d+)", re.IGNORECASE
+    )
+    coincidencias = list(patron_obj_header.finditer(bloque_seccion))
 
     registros = []
 
-    # Recomponer parejas (Codigo_Objetivo, Texto_Bloque)
-    for i in range(1, len(partes), 2):
-        cod_obj_raw = partes[i].strip()
-        contenido_bloque = partes[i + 1]
+    for idx, match in enumerate(coincidencias):
+        inicio_bloque = match.start()
+        # El fin del bloque es el inicio del siguiente objetivo o el final del texto
+        fin_bloque = (
+            coincidencias[idx + 1].start()
+            if idx + 1 < len(coincidencias)
+            else len(bloque_seccion)
+        )
 
-        # A. Extraer la descripción del Objetivo (ej: "1. Mejorar las condiciones...")
+        subtexto = bloque_seccion[inicio_bloque:fin_bloque]
+        cod_obj = match.group(1).strip()
+
+        # A. Extraer la Descripción del Objetivo (numeral ej. "1. Mejorar las condiciones...")
         match_desc_obj = re.search(
-            r"^\s*(\d+\.\s+[^\n]+)", contenido_bloque, re.MULTILINE
+            r"\n\s*(\d+\.\s+[^\n]+)", subtexto, re.IGNORECASE
         )
-        desc_obj = match_desc_obj.group(1).strip() if match_desc_obj else ""
-
-        # Unificar "01 - Objetivo 1" + "1. Descripción..."
+        desc_obj = (
+            match_desc_obj.group(1).strip() if match_desc_obj else ""
+        )
         objetivo_completo = (
-            f"{cod_obj_raw} {desc_obj}".strip()
-            if desc_obj
-            else cod_obj_raw
+            f"{cod_obj} {desc_obj}".strip() if desc_obj else cod_obj
         )
 
-        # B. Extraer Producto
+        # B. Extraer Producto (entre la palabra 'Producto' e 'Indicador')
         match_producto = re.search(
             r"Producto\s*\n\s*(\d+\.\d+\.\s+[^\n]+)",
-            contenido_bloque,
+            subtexto,
             re.IGNORECASE,
         )
         producto_str = (
             match_producto.group(1).strip() if match_producto else "N/A"
         )
 
-        # C. Extraer Indicador
+        # C. Extraer Indicador (entre 'Indicador' y 'Medido a través de' o 'Meta total')
         match_indicador = re.search(
             r"Indicador\s*\n\s*(\d+\.\d+\.\d+\s+[^\n]+)",
-            contenido_bloque,
+            subtexto,
             re.IGNORECASE,
         )
         indicador_str = (
@@ -113,12 +120,12 @@ def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
 
         # D. Extraer Meta Total
         match_meta = re.search(
-            r"Meta total:\s*([\d\.,]+)", contenido_bloque, re.IGNORECASE
+            r"Meta total:\s*([\d\.,]+)", subtexto, re.IGNORECASE
         )
         meta_str = match_meta.group(1).strip() if match_meta else "N/A"
 
         registros.append({
-            "No.": len(registros) + 1,
+            "No.": idx + 1,
             "Objetivo específico": objetivo_completo,
             "Producto": producto_str,
             "Indicador MGA": indicador_str,
@@ -576,14 +583,12 @@ with tab_mga:
                 f"Se estructuraron exitosamente **{len(df_mga)}** registro(s) de la MGA:"
             )
 
-            # Muestra la tabla consolidada
             st.dataframe(
                 df_mga,
                 use_container_width=True,
                 hide_index=True,
             )
 
-            # Opción de descarga
             csv_mga = df_mga.to_csv(index=False).encode("utf-8")
             st.download_button(
                 label="📥 Descargar Tabla MGA en CSV",
@@ -602,7 +607,6 @@ with tab_mga:
                 st.session_state.get("texto_pdf_extraido", ""),
                 height=250,
             )
-
 
 # ============================================================
 # COMPONENTE DE AUDITORÍA: WORD VS. PLAN INDICATIVO (PI)
