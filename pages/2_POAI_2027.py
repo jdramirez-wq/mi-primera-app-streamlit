@@ -39,6 +39,12 @@ def leer_plan_indicativo_drive(url_excel):
     return pd.read_excel(url_excel, sheet_name="MP", header=1, engine="openpyxl")
 
 
+import re
+import docx
+import pandas as pd
+import pdfplumber
+import streamlit as st
+
 # ============================================================
 # FUNCION MEJORADA: PARSER MGA POR BLOQUES ROBUS
 # ============================================================
@@ -114,7 +120,6 @@ def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
         })
 
     return pd.DataFrame(registros)
-
 
 # ============================================================
 # FUNCIONES EXTRACTORAS: ARCHIVO WORD (PYTHON-DOCX)
