@@ -40,54 +40,77 @@ def leer_plan_indicativo_drive(url_excel):
 
 
 # ============================================================
-# FUNCIONES EXTRACTORAS: PARSER MGA DESDE PDF Y TEXTO
+# FUNCION MEJORADA: PARSER MGA POR BLOQUES ROBUS
 # ============================================================
-def extraer_texto_de_pdf(pdf_buffer) -> str:
-    """Extrae todo el texto plano contenido en el archivo PDF cargado."""
-    texto_completo = ""
-    with pdfplumber.open(pdf_buffer) as pdf:
-        for pagina in pdf.pages:
-            texto_pag = pagina.extract_text()
-            if texto_pag:
-                texto_completo += texto_pag + "\n"
-    return texto_completo
 
 
 def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
-    """Parsea el reporte MGA del DNP extrayendo la jerarquía exacta:
-
-    Objetivo Específico -> Producto -> Indicador -> Meta Total.
-    """
-    # 1. Filtramos a partir de la sección de interés para optimizar la búsqueda
+    """Parsea el reporte MGA separando por bloques de Objetivo/Producto para evitar fallos por saltos de página o encabezados del PDF."""
+    # 1. Acotar la sección relevante (Indicadores de producto)
     if "Indicadores de producto" in texto_completo:
-        bloque_interes = texto_completo.split("Indicadores de producto")[-1]
+        bloque_seccion = texto_completo.split("Indicadores de producto")[-1]
     else:
-        bloque_interes = texto_completo
+        bloque_seccion = texto_completo
 
-    # 2. Expresión regular ajustada a la estructura flexible de la MGA
-    patron_mga = re.compile(
-        r"(\d{2}\s*-\s*Objetivo\s*\d+)\s*\n+\s*(\d+\.\s+[^\n]+)\s*\n+"
-        r"(?:Producto\s*\n+)?\s*(\d+\.\d+\.\s+[^\n]+)\s*\n+"
-        r"(?:Indicador\s*\n+)?\s*(\d+\.\d+\.\d+\s+[^\n]+).*?"
-        r"Meta total:\s*([\d\.,]+)",
-        re.DOTALL | re.IGNORECASE,
-    )
+    if "Regionalización" in bloque_seccion:
+        bloque_seccion = bloque_seccion.split("Regionalización")[0]
+
+    # 2. Dividir por patrones de Objetivo: e.g. "01 - Objetivo 1", "02 - Objetivo 2"
+    patron_corte_obj = r"(\d{2}\s*-\s*Objetivo\s*\d+)"
+    partes = re.split(patron_corte_obj, bloque_seccion)
 
     registros = []
-    coincidencias = patron_mga.findall(bloque_interes)
 
-    for idx, match in enumerate(coincidencias, start=1):
-        cod_obj, desc_obj, producto, indicador, meta_total = match
+    # Recomponer parejas (Codigo_Objetivo, Texto_Bloque)
+    for i in range(1, len(partes), 2):
+        cod_obj_raw = partes[i].strip()
+        contenido_bloque = partes[i + 1]
 
-        # Unificación de estructura solicitada: '01 - Objetivo 1 1. Descripción...'
-        objetivo_completo = f"{cod_obj.strip()} {desc_obj.strip()}"
+        # A. Extraer la descripción del Objetivo (ej: "1. Mejorar las condiciones...")
+        match_desc_obj = re.search(
+            r"^\s*(\d+\.\s+[^\n]+)", contenido_bloque, re.MULTILINE
+        )
+        desc_obj = match_desc_obj.group(1).strip() if match_desc_obj else ""
+
+        # Unificar "01 - Objetivo 1" + "1. Descripción..."
+        objetivo_completo = (
+            f"{cod_obj_raw} {desc_obj}".strip()
+            if desc_obj
+            else cod_obj_raw
+        )
+
+        # B. Extraer Producto
+        match_producto = re.search(
+            r"Producto\s*\n\s*(\d+\.\d+\.\s+[^\n]+)",
+            contenido_bloque,
+            re.IGNORECASE,
+        )
+        producto_str = (
+            match_producto.group(1).strip() if match_producto else "N/A"
+        )
+
+        # C. Extraer Indicador
+        match_indicador = re.search(
+            r"Indicador\s*\n\s*(\d+\.\d+\.\d+\s+[^\n]+)",
+            contenido_bloque,
+            re.IGNORECASE,
+        )
+        indicador_str = (
+            match_indicador.group(1).strip() if match_indicador else "N/A"
+        )
+
+        # D. Extraer Meta Total
+        match_meta = re.search(
+            r"Meta total:\s*([\d\.,]+)", contenido_bloque, re.IGNORECASE
+        )
+        meta_str = match_meta.group(1).strip() if match_meta else "N/A"
 
         registros.append({
-            "No.": idx,
+            "No.": len(registros) + 1,
             "Objetivo específico": objetivo_completo,
-            "Producto": producto.strip(),
-            "Indicador MGA": indicador.strip(),
-            "Meta total": meta_total.strip(),
+            "Producto": producto_str,
+            "Indicador MGA": indicador_str,
+            "Meta total": meta_str,
         })
 
     return pd.DataFrame(registros)
