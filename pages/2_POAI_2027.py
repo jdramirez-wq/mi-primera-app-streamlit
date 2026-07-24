@@ -36,6 +36,49 @@ def leer_plan_indicativo_drive(url_excel):
     return pd.read_excel(url_excel, sheet_name="MP", header=1, engine="openpyxl")
 
 
+def cruzar_con_plan_indicativo(df_indicadores, url_excel):
+    """Cruza la matriz de indicadores DOCX con la hoja 'MP' de Google Drive usando el código MP."""
+    try:
+        df_pi = leer_plan_indicativo_drive(url_excel)
+
+        # Normalización de columnas en el Plan Indicativo para facilitar el merge
+        df_pi.columns = [str(col).strip() for col in df_pi.columns]
+
+        # Identificar o crear la columna clave normalizada 'Codigo_MP_Clean'
+        col_mp_pi = next(
+            (c for c in df_pi.columns if "meta" in c.lower() and "producto" in c.lower()),
+            df_pi.columns[0],
+        )
+
+        df_pi["Codigo_MP_Clean"] = df_pi[col_mp_pi].apply(
+            lambda x: extraer_codigo_numerico(x, "MP")
+        )
+
+        df_ind_copy = df_indicadores.copy()
+        if "Código MP" in df_ind_copy.columns:
+            df_ind_copy["Codigo_MP_Clean"] = df_ind_copy["Código MP"].apply(
+                lambda x: extraer_codigo_numerico(x, "MP")
+            )
+        else:
+            return df_indicadores, "No se encontró la columna 'Código MP' para realizar el cruce."
+
+        # Realizar el merge (left join) manteniendo la estructura del DOCX
+        df_cruzado = pd.merge(
+            df_ind_copy,
+            df_pi,
+            on="Codigo_MP_Clean",
+            how="left",
+            suffixes=("", "_Drive"),
+        )
+
+        # Eliminar la columna temporal de cruce
+        df_cruzado.drop(columns=["Codigo_MP_Clean"], inplace=True, errors="ignore")
+
+        return df_cruzado, None
+    except Exception as e:
+        return df_indicadores, f"Error al procesar el Plan Indicativo de Drive: {e}"
+
+
 # ============================================================
 # FUNCIONES EXTRACTORAS: PARSER MGA LÍNEA POR LÍNEA
 # ============================================================
@@ -512,13 +555,14 @@ def procesar_tablas_estandar(texto_bruto: str):
 # ============================================================
 st.title("📐 Control Previo y Revisión Técnica de Proyectos")
 st.write(
-    "Módulo integral para el análisis de Cadenas de Valor (.docx) y Reportes MGA DNP (.pdf)."
+    "Módulo integral para el análisis de Cadenas de Valor (.docx), Reportes MGA DNP (.pdf) y Plan Indicativo."
 )
 st.markdown("---")
 
-tab_cv, tab_mga = st.tabs([
+tab_cv, tab_mga, tab_cruce = st.tabs([
     "📄 Cadena de Valor (DOCX)",
     "📑 Reporte MGA DNP (PDF)",
+    "🔍 Análisis y Cruce de Información",
 ])
 
 # TAB 1: CADENA DE VALOR (DOCX)
@@ -664,7 +708,37 @@ with tab_mga:
                 st.session_state.get("texto_pdf_extraido", ""),
                 height=250,
             )
-            
+
+# TAB 3: ANÁLISIS Y CRUCE DE INFORMACIÓN
+with tab_cruce:
+    st.subheader("🔗 Cruce de Cadena de Valor con Plan Indicativo (Drive)")
+
+    if "df_indicadores_estandar" in st.session_state:
+        df_ind = st.session_state["df_indicadores_estandar"]
+
+        if not df_ind.empty:
+            with st.spinner("⏳ Conectando con Google Drive y cruzando variables del Plan Indicativo..."):
+                df_cruzado, err = cruzar_con_plan_indicativo(df_ind, URL_DRIVE_EXCEL)
+
+            if err:
+                st.error(f"🚨 {err}")
+            else:
+                st.success("✅ ¡Cruce con el Plan Indicativo realizado correctamente!")
+                st.markdown("### 📊 Matriz Consolidada (DOCX + Plan Indicativo Drive)")
+                st.dataframe(df_cruzado, use_container_width=True)
+
+                csv_cruzado = df_cruzado.to_csv(index=False).encode("utf-8")
+                st.download_button(
+                    label="📥 Descargar Matriz Cruzada en CSV",
+                    data=csv_cruzado,
+                    file_name="matriz_cruzada_plan_indicativo.csv",
+                    mime="text/csv",
+                )
+        else:
+            st.warning("La matriz de indicadores extraída del DOCX está vacía.")
+    else:
+        st.info("💡 Por favor, sube y procesa un archivo de Cadena de Valor (.docx) en la primera pestaña para habilitar el cruce.")
+        
 # ============================================================
 # COMPONENTE DE AUDITORÍA: WORD VS. PLAN INDICATIVO (PI)
 # ============================================================
