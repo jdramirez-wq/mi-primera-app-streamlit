@@ -37,125 +37,77 @@ def leer_plan_indicativo_drive(url_excel):
 
 
 # ============================================================
-# FUNCIONES EXTRACTORAS: PARSER MGA LÍNEA POR LÍNEA
+# NUEVA ESTRATEGIA: PARSER MGA POR PATRONES / BLOQUES
 # ============================================================
 def extraer_texto_de_pdf(pdf_buffer) -> str:
     """Extrae todo el texto plano contenido en el archivo PDF cargado."""
-    texto_completo = []
+    paginas_texto = []
     with pdfplumber.open(pdf_buffer) as pdf:
         for pagina in pdf.pages:
-            texto_pag = pagina.extract_text()
-            if texto_pag:
-                texto_completo.append(texto_pag)
-    return "\n".join(texto_completo)
+            t = pagina.extract_text()
+            if t:
+                paginas_texto.append(t)
+    return "\n".join(paginas_texto)
 
 
 def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
-    """Parser jerárquico para reportes MGA DNP (PDF).
+    """NUEVA ESTRATEGIA: Extrae los indicadores delimitando la sección principal
 
-    Guarda contexto persistente de Objetivo y Producto para capturar todos los
-    indicadores asociados.
+    y parseando los bloques con Regex en lugar de depender de banderas de estado
+    línea por línea.
     """
-    lineas = texto_completo.splitlines()
+    # 1. Delimitar la sección global de "Indicadores de producto"
+    patron_seccion = re.compile(
+        r"(Programación\s*/\s*Indicadores de producto|Indicadores de producto)(.*?)(?=Programación\s*/\s*Indicadores de gestión|Fuentes de financiación|$)",
+        re.DOTALL | re.IGNORECASE,
+    )
+    match_seccion = patron_seccion.search(texto_completo)
+
+    if not match_seccion:
+        return pd.DataFrame()
+
+    bloque_indicadores = match_seccion.group(2)
+
+    # 2. Partir por Objetivos específicos (Ej: "01 Objetivo 1 ...", "02 Objetivo 2 ...")
+    patron_objetivos = re.compile(
+        r"(^\d{2}\s*Objetivo\s*\d+.*?)(?=(^\d{2}\s*Objetivo\s*\d+)|$)",
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
+    )
+    bloques_obj = patron_objetivos.findall(bloque_indicadores)
+
     registros = []
 
-    # Estado persistente de jerarquía MGA
-    en_seccion_indicadores = False
-    obj_actual_codigo = ""
-    obj_actual_desc = ""
-    prod_actual = ""
+    for obj_match in bloques_obj:
+        texto_obj = obj_match[0]
 
-    # Estado temporal del indicador en turno
-    ind_codigo_texto = ""
-    meta_total = ""
-
-    esperando_desc_obj = False
-    esperando_producto = False
-    esperando_indicador = False
-
-    for linea in lineas:
-        l = linea.strip()
-        if not l:
+        # Extraer línea del objetivo
+        lineas_obj = [l.strip() for l in texto_obj.splitlines() if l.strip()]
+        if not lineas_obj:
             continue
 
-        # Ignore ruido recurrente de encabezados / pies de página MGA
-        if (
-            l.startswith("Impreso el")
-            or l.startswith("Página ")
-            or "DEPARTAMENTO DEL VALLE" in l
-            or "Departamento Nacional de Planeación" in l
-        ):
-            continue
+        codigo_obj = lineas_obj[0]
+        desc_obj = lineas_obj[1] if len(lineas_obj) > 1 else ""
+        objetivo_completo = f"{codigo_obj} - {desc_obj}".strip()
 
-        # 1. Delimitar inicio y fin de la sección principal
-        if (
-            "Programación / Indicadores de producto" in l
-            or "Indicadores de producto" in l
-        ) and not l.startswith("Programación / Indicadores de gestión"):
-            en_seccion_indicadores = True
+        # 3. Partir las entradas de indicadores/productos dentro del bloque del objetivo
+        # Busca el patrón estandarizado: Producto -> Nombre -> Indicador -> Nombre -> Meta Total
+        patron_bloque_ind = re.compile(
+            r"Producto\s*\n\s*(.*?)\s*\n\s*Indicador\s*\n\s*(.*?)\s*\n.*?Meta total:\s*([^\n]+)",
+            re.DOTALL | re.IGNORECASE,
+        )
 
-        if "Programación / Indicadores de gestión" in l or "Fuentes de financiación" in l:
-            en_seccion_indicadores = False
+        for m in patron_bloque_ind.finditer(texto_obj):
+            prod = m.group(1).replace("\n", " ").strip()
+            ind = m.group(2).replace("\n", " ").strip()
+            meta = m.group(3).strip()
 
-        if not en_seccion_indicadores:
-            continue
-
-        # 2. Detectar Objetivo (Ej: "01 Objetivo 1" o "02 Objetivo 2")
-        match_obj = re.match(r"^(\d{2}\s*Objetivo\s*\d+)", l, re.IGNORECASE)
-        if match_obj:
-            obj_actual_codigo = match_obj.group(1).strip()
-            esperando_desc_obj = True
-            prod_actual = ""  # Se reinicia producto al cambiar de objetivo
-            continue
-
-        if esperando_desc_obj:
-            obj_actual_desc = l
-            esperando_desc_obj = False
-            continue
-
-        # 3. Detectar pivote Producto
-        if l.lower() == "producto":
-            esperando_producto = True
-            continue
-
-        if esperando_producto:
-            prod_actual = l
-            esperando_producto = False
-            continue
-
-        # 4. Detectar pivote Indicador
-        if l.lower() == "indicador":
-            esperando_indicador = True
-            continue
-
-        if esperando_indicador:
-            ind_codigo_texto = l
-            esperando_indicador = False
-            continue
-
-        # 5. Capturar Meta Total
-        if l.lower().startswith("meta total:"):
-            partes_meta = l.split(":", 1)
-            if len(partes_meta) > 1:
-                meta_total = partes_meta[1].strip()
-            continue
-
-        # 6. Cierre del indicador al llegar a "Programación de indicadores"
-        if "Programación de indicadores" in l:
-            if ind_codigo_texto:
-                registros.append({
-                    "No.": len(registros) + 1,
-                    "Objetivo específico": (
-                        f"{obj_actual_codigo} - {obj_actual_desc}".strip()
-                    ),
-                    "Producto": prod_actual,
-                    "Indicador MGA": ind_codigo_texto,
-                    "Meta total": meta_total,
-                })
-                # Se limpian solo los datos del indicador.
-                ind_codigo_texto = ""
-                meta_total = ""
-            continue
+            registros.append({
+                "No.": len(registros) + 1,
+                "Objetivo específico": objetivo_completo,
+                "Producto": prod,
+                "Indicador MGA": ind,
+                "Meta total": meta,
+            })
 
     return pd.DataFrame(registros)
 
