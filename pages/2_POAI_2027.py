@@ -4,6 +4,11 @@ import pandas as pd
 import pdfplumber
 import streamlit as st
 
+# Módulos para OCR (lectura de PDFs escaneados / tipo imagen)
+from pdf2image import convert_from_bytes
+import pytesseract
+from PIL import Image
+
 # ============================================================
 # CONFIGURACIÓN INICIAL DE LA PÁGINA
 # ============================================================
@@ -15,20 +20,11 @@ st.set_page_config(
 
 URL_DRIVE_EXCEL = "https://docs.google.com/spreadsheets/d/18z_tAg7RPvSTSRSTYoYtKgIV3ch3cQ-JbcAOTjQD8ss/export?format=xlsx"
 
-# Compilación previa de RegEx para máximo rendimiento
-PATRON_OBJETIVO = re.compile(r"^(\d{2}\s*Objetivo\s*\d+)", re.IGNORECASE)
-PATRON_MP = re.compile(r"(MP\d+)", re.IGNORECASE)
-PATRON_FECHA = re.compile(r"Fecha:\s*([\d/:-]+)", re.IGNORECASE)
-PATRON_NOM_PROY = re.compile(r"PROYECTO INVERSIÓN:\s*[“\"']([^”\"']+)[”\"']", re.IGNORECASE)
-PATRON_MGA = re.compile(r"ID-MGA:\s*(\w+)", re.IGNORECASE)
-PATRON_BPIN = re.compile(r"BPIN\s*(\d+)", re.IGNORECASE)
-PATRON_PI = re.compile(r"(PI\d+-\d+)", re.IGNORECASE)
-
 
 # ============================================================
 # FUNCIONES AUXILIARES Y DE CACHÉ
 # ============================================================
-def extraer_codigo_numerico(texto: str, prefijo: str = "") -> str:
+def extraer_codigo_numerico(texto, prefijo=""):
     """Aísla la secuencia numérica de un texto (ej. 'MP24 - Nombre' -> '24')."""
     if pd.isna(texto) or str(texto).strip().lower() == "nan":
         return ""
@@ -40,39 +36,71 @@ def extraer_codigo_numerico(texto: str, prefijo: str = "") -> str:
 
 
 @st.cache_data(show_spinner=False)
-def leer_plan_indicativo_drive(url_excel: str) -> pd.DataFrame:
+def leer_plan_indicativo_drive(url_excel):
     """Carga en caché la pestaña 'MP' del Plan Indicativo desde Drive."""
     return pd.read_excel(url_excel, sheet_name="MP", header=1, engine="openpyxl")
 
 
 # ============================================================
-# ESTRATEGIA DE RECORTE Y EXTRACCIÓN MGA POR PÁGINAS
+# ESTRATEGIA OCR Y LECTURA HÍBRIDA DE PDF
 # ============================================================
-def extraer_texto_desde_seccion(
-    pdf_buffer, clave_inicio: str = "Indicadores de producto"
-):
-    """Localiza la primera página que contiene 'clave_inicio' y extrae el texto de
-    esa página en adelante, devolviendo también el número de página inicial y el total.
+def extraer_texto_pagina(pagina_pdf, num_pag, pdf_bytes) -> str:
+    """Extrae texto nativo de la página con pdfplumber.
+    Si es escaneada o tipo imagen, aplica OCR con pytesseract.
     """
+    texto = pagina_pdf.extract_text() or ""
+    
+    # Si el texto nativo es insuficiente, aplicamos OCR a la página específica
+    if len(texto.strip()) < 10:
+        try:
+            # Convertir únicamente la página requerida a imagen
+            imagenes_pag = convert_from_bytes(
+                pdf_bytes, 
+                first_page=num_pag, 
+                last_page=num_pag, 
+                dpi=200
+            )
+            if imagenes_pag:
+                texto_ocr = pytesseract.image_to_string(imagenes_pag[0], lang="spa")
+                if len(texto_ocr.strip()) > len(texto.strip()):
+                    texto = texto_ocr
+        except Exception as e:
+            # En caso de fallo de OCR (ej. tesseract/poppler no instalado en servidor)
+            st.warning(f"⚠️ No se pudo procesar OCR en la página {num_pag}: {e}")
+            
+    return texto.strip()
+
+
+def extraer_texto_desde_seccion(
+    pdf_buffer, clave_inicio="Indicadores de producto"
+):
+    """Localiza la primera página que contiene 'clave_inicio' (nativa o mediante OCR)
+    y extrae el texto de esa página en adelante.
+    """
+    pdf_bytes = pdf_buffer.getvalue() if hasattr(pdf_buffer, "getvalue") else pdf_buffer.read()
+    if hasattr(pdf_buffer, "seek"):
+        pdf_buffer.seek(0)
+
     texto_filtrado = ""
     pagina_inicio = None
     total_paginas = 0
 
-    pdf_buffer.seek(0)
     with pdfplumber.open(pdf_buffer) as pdf:
         total_paginas = len(pdf.pages)
-        clave_lower = clave_inicio.lower()
 
         for num_pag, pagina in enumerate(pdf.pages, start=1):
-            texto_pag = pagina.extract_text() or ""
+            texto_pag = extraer_texto_pagina(pagina, num_pag, pdf_bytes)
 
-            if pagina_inicio is None and clave_lower in texto_pag.lower():
-                pagina_inicio = num_pag
+            # Si aún no encontramos la página de inicio, la buscamos
+            if pagina_inicio is None:
+                if clave_inicio.lower() in texto_pag.lower():
+                    pagina_inicio = num_pag
 
+            # Si ya identificamos la página de inicio, acumulamos el texto
             if pagina_inicio is not None:
                 texto_filtrado += f"\n--- PÁGINA {num_pag} ---\n" + texto_pag
 
-    return texto_filtrado, pagina_inicio, total_paginas
+    return texto_filtrado, pagina_inicio, total_paginas, pdf_bytes
 
 
 def extraer_productos_mga_texto(texto_recortado: str) -> pd.DataFrame:
@@ -82,10 +110,11 @@ def extraer_productos_mga_texto(texto_recortado: str) -> pd.DataFrame:
     lineas = texto_recortado.splitlines()
     registros = []
 
-    en_seccion_indicadores = True
+    en_seccion_indicadores = True  # Ya viene recortado desde la página clave
     obj_actual_codigo = ""
     obj_actual_desc = ""
     prod_actual = ""
+
     ind_codigo_texto = ""
     meta_total = ""
 
@@ -98,16 +127,18 @@ def extraer_productos_mga_texto(texto_recortado: str) -> pd.DataFrame:
         if not l or l.startswith("--- PÁGINA"):
             continue
 
+        # Frenar la extracción si se llega a secciones posteriores del reporte MGA
         if (
-            "programación / indicadores de gestión" in l.lower()
-            or "fuentes de financiación" in l.lower()
+            "Programación / Indicadores de gestión" in l
+            or "Fuentes de financiación" in l
         ):
             en_seccion_indicadores = False
 
         if not en_seccion_indicadores:
             break
 
-        match_obj = PATRON_OBJETIVO.match(l)
+        # Captura de Objetivo
+        match_obj = re.match(r"^(\d{2}\s*Objetivo\s*\d+)", l, re.IGNORECASE)
         if match_obj:
             obj_actual_codigo = match_obj.group(1).strip()
             esperando_desc_obj = True
@@ -119,6 +150,7 @@ def extraer_productos_mga_texto(texto_recortado: str) -> pd.DataFrame:
             esperando_desc_obj = False
             continue
 
+        # Captura de Producto
         if l.lower() == "producto":
             esperando_producto = True
             continue
@@ -128,6 +160,7 @@ def extraer_productos_mga_texto(texto_recortado: str) -> pd.DataFrame:
             esperando_producto = False
             continue
 
+        # Captura de Indicador
         if l.lower() == "indicador":
             esperando_indicador = True
             continue
@@ -137,17 +170,21 @@ def extraer_productos_mga_texto(texto_recortado: str) -> pd.DataFrame:
             esperando_indicador = False
             continue
 
+        # Captura de Meta Total
         if l.lower().startswith("meta total:"):
             partes_meta = l.split(":", 1)
             if len(partes_meta) > 1:
                 meta_total = partes_meta[1].strip()
             continue
 
-        if "programación de indicadores" in l.lower():
+        # Cierre del registro por cada bloque
+        if "Programación de indicadores" in l:
             if ind_codigo_texto:
                 registros.append({
                     "No.": len(registros) + 1,
-                    "Objetivo específico": f"{obj_actual_codigo} - {obj_actual_desc}".strip(),
+                    "Objetivo específico": (
+                        f"{obj_actual_codigo} - {obj_actual_desc}".strip()
+                    ),
                     "Producto": prod_actual,
                     "Indicador MGA": ind_codigo_texto,
                     "Meta total": meta_total,
@@ -164,7 +201,6 @@ def extraer_productos_mga_texto(texto_recortado: str) -> pd.DataFrame:
 # ============================================================
 def extraer_texto_y_tablas_docx(file_buffer) -> str:
     """Lee el archivo .docx y lo convierte en texto plano estructurado por bloques."""
-    file_buffer.seek(0)
     doc = docx.Document(file_buffer)
     contenido_total = []
 
@@ -180,7 +216,8 @@ def extraer_texto_y_tablas_docx(file_buffer) -> str:
                 textos_celdas = [
                     celda.text.strip().replace("\n", " ") for celda in fila.cells
                 ]
-                contenido_total.append(" | ".join(textos_celdas))
+                linea_tabla = " | ".join(textos_celdas)
+                contenido_total.append(linea_tabla)
 
     return "\n".join(contenido_total)
 
@@ -196,17 +233,21 @@ def extraer_encabezado_estandar(texto_bruto: str) -> dict:
         "codigo_pi": "No detectado",
     }
 
-    match_fecha = PATRON_FECHA.search(texto_bruto)
+    match_fecha = re.search(r"Fecha:\s*([\d/:-]+)", texto_bruto, re.IGNORECASE)
     if match_fecha:
         metadatos["fecha"] = match_fecha.group(1)
 
-    match_nom = PATRON_NOM_PROY.search(texto_bruto)
+    match_nom = re.search(
+        r"PROYECTO INVERSIÓN:\s*[“\"']([^”\"']+)[”\"']",
+        texto_bruto,
+        re.IGNORECASE,
+    )
     if match_nom:
         metadatos["nombre_proyecto_encabezado"] = match_nom.group(1).strip()
 
-    match_mga = PATRON_MGA.search(texto_bruto)
-    match_bpin = PATRON_BPIN.search(texto_bruto)
-    match_pi = PATRON_PI.search(texto_bruto)
+    match_mga = re.search(r"ID-MGA:\s*(\w+)", texto_bruto, re.IGNORECASE)
+    match_bpin = re.search(r"BPIN\s*(\d+)", texto_bruto, re.IGNORECASE)
+    match_pi = re.search(r"(PI\d+-\d+)", texto_bruto, re.IGNORECASE)
 
     if match_mga:
         metadatos["id_mga"] = match_mga.group(1).strip()
@@ -251,7 +292,11 @@ def procesar_tablas_estandar(texto_bruto: str):
                     dicc_indicadores[idx]["Objetivo General Proyecto"] = partes[5] if len(partes) > 5 else ""
                     dicc_indicadores[idx]["Objetivo Específico"] = partes[6] if len(partes) > 6 else ""
 
-                    if nombre_proyecto_tabla == "No detectado" and len(partes) > 3 and partes[3]:
+                    if (
+                        nombre_proyecto_tabla == "No detectado"
+                        and len(partes) > 3
+                        and partes[3]
+                    ):
                         nombre_proyecto_tabla = partes[3]
 
         # TABLA 2
@@ -278,7 +323,7 @@ def procesar_tablas_estandar(texto_bruto: str):
                         meta_producto_texto = partes[1] if len(partes) > 1 else ""
                         dicc_indicadores[idx]["Meta Producto Plan"] = meta_producto_texto
 
-                        match_mp = PATRON_MP.search(meta_producto_texto)
+                        match_mp = re.search(r"(MP\d+)", meta_producto_texto)
                         dicc_indicadores[idx]["Código MP"] = match_mp.group(1) if match_mp else "Sin Código"
 
                         dicc_indicadores[idx]["P.G. PI"] = partes[2] if len(partes) > 2 else ""
@@ -326,7 +371,7 @@ def procesar_tablas_estandar(texto_bruto: str):
 
                 if len(partes) >= 3 and "FIRMA" not in partes[0].upper() and partes[0] != "":
                     col_mp = partes[pos_mp] if len(partes) > pos_mp else ""
-                    match_mp_act = PATRON_MP.search(col_mp)
+                    match_mp_act = re.search(r"(MP\d+)", col_mp)
                     actividad = {
                         "COD. META DE PRODUCTO": col_mp,
                         "Código MP Extrayendo": match_mp_act.group(1) if match_mp_act else "Sin Código",
@@ -351,12 +396,12 @@ def procesar_tablas_estandar(texto_bruto: str):
 # INTERFAZ STREAMLIT
 # ============================================================
 st.title("📐 Control Previo y Revisión Técnica de Proyectos")
-st.write("Módulo integral para el análisis de Cadenas de Valor (.docx), Reportes MGA DNP (.pdf) y Plan Indicativo (Excel).")
+st.write("Módulo integral para el análisis de Cadenas de Valor (.docx), Reportes MGA DNP (.pdf) e imágenes/PDFs escaneados y Plan Indicativo (Excel).")
 st.markdown("---")
 
 tab_cv, tab_mga, tab_pi = st.tabs([
     "📄 Cadena de Valor (DOCX)",
-    "📑 Reporte MGA DNP (PDF)",
+    "📑 Reporte MGA DNP (PDF/OCR)",
     "📊 Plan Indicativo (Drive)"
 ])
 
@@ -434,11 +479,11 @@ with tab_cv:
         else:
             st.warning("No se detectaron actividades presupuestales en la Tabla 5.")
 
-# TAB 2: REPORTE MGA (PDF)
+# TAB 2: REPORTE MGA (PDF / OCR)
 with tab_mga:
-    st.subheader("📑 Visor y Extractor de Texto MGA DNP")
+    st.subheader("📑 Visor y Extractor de Texto MGA DNP (Soporte Nativo y OCR)")
     archivo_pdf = st.file_uploader(
-        "📂 Sube el archivo PDF del reporte MGA DNP",
+        "📂 Sube el archivo PDF del reporte MGA DNP (Texto o Escaneado)",
         type=["pdf"],
         key="uploader_pdf_directo",
     )
@@ -449,13 +494,14 @@ with tab_mga:
             or st.session_state["ultimo_archivo_pdf"] != archivo_pdf.name
         ):
             with st.spinner(
-                "🔍 Localizando la sección 'Indicadores de producto' y extrayendo texto..."
+                "🔍 Escaneando PDF, aplicando OCR si es necesario y buscando 'Indicadores de producto'..."
             ):
                 try:
                     (
                         texto_seccion,
                         pag_inicio,
                         total_pags,
+                        pdf_bytes,
                     ) = extraer_texto_desde_seccion(
                         archivo_pdf, clave_inicio="Indicadores de producto"
                     )
@@ -463,7 +509,9 @@ with tab_mga:
                     st.session_state["texto_mga_seccion"] = texto_seccion
                     st.session_state["pag_inicio_mga"] = pag_inicio
                     st.session_state["total_pags_mga"] = total_pags
+                    st.session_state["pdf_bytes_mga"] = pdf_bytes
 
+                    # Estructurar Dataframe a partir del texto recortado
                     if pag_inicio:
                         df_mga = extraer_productos_mga_texto(texto_seccion)
                         st.session_state["df_mga_productos"] = df_mga
@@ -484,6 +532,7 @@ with tab_mga:
                 f"✅ ¡Sección detectada! Mostrando contenido desde la **Página {pag_inicio}** de {total_pags}."
             )
 
+            # Mostrar Matriz Estructurada (Dataframe)
             df_mga = st.session_state.get("df_mga_productos", pd.DataFrame())
             if not df_mga.empty:
                 st.markdown("### 📋 Tabla Resumen Extraída de la MGA")
@@ -497,6 +546,7 @@ with tab_mga:
                     mime="text/csv",
                 )
 
+            # Visor y Descarga de Texto Plano Recortado
             st.markdown("### 📝 Texto Extraído (Desde 'Indicadores de Producto')")
             st.caption(
                 "Copia este texto plano directamente o úsalo como insumo para alimentarlo a tu prompt."
@@ -519,25 +569,26 @@ with tab_mga:
         else:
             st.warning(
                 "⚠️ No se encontró la frase 'Indicadores de producto' en ninguna página del PDF. "
-                "A continuación se muestra el texto completo sin recortar:"
+                "A continuación se muestra el texto completo escaneado/extraído:"
             )
-            archivo_pdf.seek(0)
-            with pdfplumber.open(archivo_pdf) as pdf:
-                texto_completo = "\n".join(
-                    [p.extract_text() or "" for p in pdf.pages]
-                )
+            pdf_bytes = st.session_state.get("pdf_bytes_mga", b"")
+            if pdf_bytes:
+                with pdfplumber.open(archivo_pdf) as pdf:
+                    texto_completo = "\n".join(
+                        [extraer_texto_pagina(p, idx + 1, pdf_bytes) for idx, p in enumerate(pdf.pages)]
+                    )
 
-            st.text_area(
-                label="Texto Completo del PDF:",
-                value=texto_completo,
-                height=400,
-            )
+                st.text_area(
+                    label="Texto Completo del PDF:",
+                    value=texto_completo,
+                    height=400,
+                )
 
 # TAB 3: PLAN INDICATIVO (DRIVE)
 with tab_pi:
     st.subheader("📊 Base de Datos: Plan Indicativo (Pestaña 'MP')")
     st.caption("Carga optimizada de la fuente oficial almacenada en Google Drive.")
-
+    
     if st.button("🔄 Cargar / Recargar Plan Indicativo desde Drive"):
         try:
             with st.spinner("⏳ Conectando con Google Drive y leyendo pestaña 'MP'..."):
