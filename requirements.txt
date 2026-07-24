@@ -4,3 +4,4 @@ openpyxl
 reportlab
 numpy
 python-docx
+pdfplumber
