@@ -54,32 +54,40 @@ def extraer_texto_de_pdf(pdf_buffer) -> str:
 
 
 def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
-    """Procesa el texto extraído de la MGA y genera la Tabla Resumen Ejecutiva de Objetivos, Productos, Indicadores y Metas."""
+    """Parsea el reporte MGA del DNP extrayendo la jerarquía exacta:
+
+    Objetivo Específico -> Producto -> Indicador -> Meta Total.
+    """
+    # 1. Filtramos a partir de la sección de interés para optimizar la búsqueda
     if "Indicadores de producto" in texto_completo:
         bloque_interes = texto_completo.split("Indicadores de producto")[-1]
     else:
         bloque_interes = texto_completo
 
-    # Patrón robusto para capturar el bloque jerárquico MGA
-    patron_objetivo = re.compile(
-        r"(\d{2}\s+Objetivo\s+\d+)\n\s*(\d+\.\s+[^\n]+)\n\s*Producto\n\s*(\d+\.\d+\.\s+[^\n]+)\n\s*Indicador\n\s*(\d+\.\d+\.\d+\s+[^\n]+).*?Meta total:\s*([\d\.,]+)",
-        re.DOTALL,
+    # 2. Expresión regular ajustada a la estructura flexible de la MGA
+    patron_mga = re.compile(
+        r"(\d{2}\s*-\s*Objetivo\s*\d+)\s*\n+\s*(\d+\.\s+[^\n]+)\s*\n+"
+        r"(?:Producto\s*\n+)?\s*(\d+\.\d+\.\s+[^\n]+)\s*\n+"
+        r"(?:Indicador\s*\n+)?\s*(\d+\.\d+\.\d+\s+[^\n]+).*?"
+        r"Meta total:\s*([\d\.,]+)",
+        re.DOTALL | re.IGNORECASE,
     )
 
     registros = []
-    coincidencias = patron_objetivo.findall(bloque_interes)
+    coincidencias = patron_mga.findall(bloque_interes)
 
-    for idx, match in enumerate(coincidencias, 1):
-        num_obj_raw, desc_obj, prod_raw, ind_raw, meta_raw = match
-        codigo_obj = num_obj_raw.strip().replace("Objetivo ", "")
-        obj_completo = f"{codigo_obj} - Objetivo {codigo_obj} {desc_obj.strip()}"
+    for idx, match in enumerate(coincidencias, start=1):
+        cod_obj, desc_obj, producto, indicador, meta_total = match
+
+        # Unificación de estructura solicitada: '01 - Objetivo 1 1. Descripción...'
+        objetivo_completo = f"{cod_obj.strip()} {desc_obj.strip()}"
 
         registros.append({
             "No.": idx,
-            "Objetivo Específico MGA": obj_completo,
-            "Producto MGA": prod_raw.strip(),
-            "Indicador MGA": ind_raw.strip(),
-            "Meta Total MGA": meta_raw.strip(),
+            "Objetivo específico": objetivo_completo,
+            "Producto": producto.strip(),
+            "Indicador MGA": indicador.strip(),
+            "Meta total": meta_total.strip(),
         })
 
     return pd.DataFrame(registros)
@@ -524,18 +532,29 @@ with tab_mga:
 
     if "df_mga_productos" in st.session_state:
         df_mga = st.session_state["df_mga_productos"]
-        
+
         if not df_mga.empty:
-            st.markdown("### 📋 Tabla Resumen: Objetivos Específicos, Productos, Indicadores y Metas MGA")
+            st.markdown(
+                "### 📋 Tabla Resumen: Objetivos Específicos, Productos, Indicadores y Metas MGA"
+            )
             st.write(
                 f"Se estructuraron exitosamente **{len(df_mga)}** registro(s) de la MGA:"
             )
-            
-            # Muestra la tabla consolidada solicitada
+
+            # Tabla consolidada con las columnas parametrizadas
             st.dataframe(
-                df_mga, 
+                df_mga,
                 use_container_width=True,
-                hide_index=True
+                hide_index=True,
+            )
+
+            # Botón para descarga rápida
+            csv_mga = df_mga.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📥 Descargar Tabla MGA en CSV",
+                data=csv_mga,
+                file_name="resumen_mga_productos.csv",
+                mime="text/csv",
             )
         else:
             st.warning(
@@ -548,7 +567,9 @@ with tab_mga:
                 st.session_state.get("texto_pdf_extraido", ""),
                 height=250,
             )
-            
+
+
+
 # ============================================================
 # COMPONENTE DE AUDITORÍA: WORD VS. PLAN INDICATIVO (PI)
 # ============================================================
