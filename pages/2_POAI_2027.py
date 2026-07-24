@@ -74,18 +74,17 @@ def cruzar_con_plan_indicativo(df_indicadores, url_excel):
 
 
 # ============================================================
-# FUNCIONES EXTRACTORAS: MGA DESDE XML (LÓGICA RELACIONAL OPTIMIZADA)
+# FUNCIONES EXTRACTORAS: MGA DESDE XML (SIN FUENTE DE VERIFICACIÓN)
 # ============================================================
 def procesar_mga_xml(xml_buffer) -> pd.DataFrame:
     """
-    Parsea el archivo XML real de la MGA DNP relacionando Objetivos Específicos
+    Parsea el archivo XML de la MGA DNP relacionando Objetivos Específicos
     con sus Productos e Indicadores mediante SpecificObjectiveId.
     """
     tree = ET.parse(xml_buffer)
     root = tree.getroot()
 
     # 1. Mapear Objetivos Específicos por su <Id>
-    # Ruta estándar MGA: CentralProblem -> Causes -> Cause -> SpecificObjective
     mapa_objetivos = {}
     for cause in root.findall(".//Cause"):
         obj_node = cause.find("SpecificObjective")
@@ -103,7 +102,7 @@ def procesar_mga_xml(xml_buffer) -> pd.DataFrame:
             if obj_id and obj_desc:
                 mapa_objetivos[obj_id] = obj_desc
 
-    # 2. Recorrer los Productos y vincular con su Objetivo Específico por SpecificObjectiveId
+    # 2. Recorrer los Productos y vincular con su Objetivo Específico
     registros = []
     productos = root.findall(".//Product")
 
@@ -113,9 +112,8 @@ def procesar_mga_xml(xml_buffer) -> pd.DataFrame:
 
         nombre_producto = prod.findtext("ProductName", "").strip()
         auto_indicador = prod.findtext("AutoIndicatorName", "").strip()
-        fuente_verificacion = prod.findtext("VerificationSource", "").strip()
         
-        # Meta/Cantidad
+        # Meta / Cantidad
         amount = prod.findtext("Amount", "").strip()
         goal = prod.findtext("Goal", "").strip()
         meta = amount if amount and amount != "0.0000" else goal
@@ -127,11 +125,10 @@ def procesar_mga_xml(xml_buffer) -> pd.DataFrame:
                 "Objetivo Específico": objetivo_texto,
                 "Producto MGA": nombre_producto,
                 "Indicador MGA": auto_indicador,
-                "Fuente de Verificación": fuente_verificacion,
                 "Meta / Cantidad": meta,
             })
 
-    # Fallback genérico en caso de que la estructura XML sea no estándar o plana
+    # Fallback genérico en caso de estructura no estándar
     if not registros:
         for idx, node in enumerate(root.findall(".//*")):
             data = {child.tag.split("}")[-1]: child.text.strip() for child in node if child.text and child.text.strip()}
@@ -337,7 +334,7 @@ st.markdown("---")
 
 tab_cv, tab_mga, tab_cruce = st.tabs([
     "📄 Cadena de Valor (DOCX)",
-    "📑 Reporte MGA DNP (XML)",
+    "📑 Reporte MGA DNP (XML) / Comparativa",
     "🔍 Análisis y Cruce de Información",
 ])
 
@@ -378,9 +375,9 @@ with tab_cv:
         st.dataframe(st.session_state["df_poai_estandar"], use_container_width=True)
         st.metric("💰 TOTAL 2027", st.session_state.get("total_presupuesto_poai", "$0"))
 
-# TAB 2: REPORTE MGA (XML)
+# TAB 2: REPORTE MGA (XML) Y COMPARATIVA PARALELA
 with tab_mga:
-    st.subheader("📑 Reporte MGA DNP (Archivo XML)")
+    st.subheader("📑 Reporte MGA DNP (XML) y Verificación en Paralelo")
     archivo_xml = st.file_uploader("📂 Sube el archivo XML de la MGA DNP", type=["xml"], key="uploader_xml")
 
     if archivo_xml is not None:
@@ -394,21 +391,42 @@ with tab_mga:
                 except Exception as e:
                     st.error(f"🚨 Error al parsear el XML: {e}")
 
+    # Si hay información del XML parseada
     if "df_mga_productos" in st.session_state:
         df_mga = st.session_state["df_mga_productos"]
-        if not df_mga.empty:
-            st.markdown("### 📋 Resumen MGA desde XML (Objetivos ➔ Productos ➔ Fuentes de Verificación)")
+        df_docx = st.session_state.get("df_indicadores_estandar", pd.DataFrame())
+
+        st.markdown("---")
+        
+        # Si el usuario ya subió el Word, mostramos ambas tablas LADO A LADO
+        if not df_docx.empty:
+            st.info("💡 **Vista de verificación paralela:** Compara los datos del Word contra los del XML.")
+            col_left, col_right = st.columns(2)
+
+            with col_left:
+                st.markdown("### 📄 Cadena de Valor (DOCX)")
+                # Mostramos columnas clave del Word para la comparación rápida
+                cols_visibles = [c for c in ["Objetivo Específico", "Código y Nombre Producto Catalogo - MP", "Indicador de Producto Catalogo - MP", "Meta Total MGA"] if c in df_docx.columns]
+                st.dataframe(df_docx[cols_visibles] if cols_visibles else df_docx, use_container_width=True)
+
+            with col_right:
+                st.markdown("### 📑 Sistema MGA DNP (XML)")
+                st.dataframe(df_mga, use_container_width=True, hide_index=True)
+
+        else:
+            # Si solo ha subido el XML, mostramos la tabla completa del XML a ancho completo
+            st.warning("ℹ️ Sube la Cadena de Valor (.docx) en la Pestaña 1 para habilitar la vista comparativa lado a lado.")
+            st.markdown("### 📋 Resumen MGA desde XML")
             st.dataframe(df_mga, use_container_width=True, hide_index=True)
 
-            csv_mga = df_mga.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label="📥 Descargar Resumen XML en CSV",
-                data=csv_mga,
-                file_name="resumen_mga_xml.csv",
-                mime="text/csv",
-            )
-        else:
-            st.warning("No se pudieron mapear nodos de productos/indicadores en el XML subido.")
+        # Botón de descarga
+        csv_mga = df_mga.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Descargar Resumen XML en CSV",
+            data=csv_mga,
+            file_name="resumen_mga_xml.csv",
+            mime="text/csv",
+        )
 
 # TAB 3: ANÁLISIS Y CRUCE DE INFORMACIÓN
 with tab_cruce:
