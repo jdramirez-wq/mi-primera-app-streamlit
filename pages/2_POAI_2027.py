@@ -51,25 +51,28 @@ def extraer_texto_de_pdf(pdf_buffer) -> str:
 
 
 def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
-    """Parsea el reporte MGA línea por línea evaluando la secuencia estricta del DNP:
+    """Parser jerárquico para reportes MGA DNP (PDF).
 
-    Indicadores de producto -> XX - Objetivo X -> Producto -> Indicador -> Meta total -> Programación de indicadores.
+    Guarda contexto persistente de Objetivo y Producto para capturar todos los
+    indicadores asociados, solucionando saltos por múltiples tablas de
+    programación.
     """
     lineas = texto_completo.splitlines()
     registros = []
 
-    # Banderas y variables de estado
-    capturando_seccion = False
-    esperando_campo = None
+    # Estado persistente de jerarquía MGA
+    en_seccion_indicadores = False
+    obj_actual_codigo = ""
+    obj_actual_desc = ""
+    prod_actual = ""
 
-    # Objeto temporal para ir acumulando la información del indicador actual
-    obj_actual = {
-        "codigo_obj": "",
-        "desc_obj": "",
-        "producto": "",
-        "indicador": "",
-        "meta_total": "",
-    }
+    # Estado temporal del indicador en turno
+    ind_codigo_texto = ""
+    meta_total = ""
+
+    esperando_desc_obj = False
+    esperando_producto = False
+    esperando_indicador = False
 
     for linea in lineas:
         l = linea.strip()
@@ -80,117 +83,84 @@ def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
         if (
             l.startswith("Impreso el")
             or l.startswith("Página ")
-            or "MEJORAMIENTO INTEGRAL" in l
             or "DEPARTAMENTO DEL VALLE" in l
+            or "Departamento Nacional de Planeación" in l
         ):
             continue
 
-        # 1. Detectar el inicio global de la sección
-        if "Indicadores de producto" in l and not l.startswith(
-            "Programación /"
-        ):
-            capturando_seccion = True
+        # 1. Delimitar inicio y fin de la sección principal
+        if (
+            "Programación / Indicadores de producto" in l
+            or "Indicadores de producto" in l
+        ) and not l.startswith("Programación / Indicadores de gestión"):
+            en_seccion_indicadores = True
+
+        if "Programación / Indicadores de gestión" in l or "Fuentes de financiación" in l:
+            en_seccion_indicadores = False
+
+        if not en_seccion_indicadores:
             continue
 
-        # 2. Si nos topamos con Regionalización o Focalización, cerramos la captura global
-        if "Programación / Regionalización" in l or "Focalización" in l:
-            capturando_seccion = False
-
-        if not capturando_seccion:
+        # 2. Detectar Objetivo (Ej: "01 Objetivo 1" o "02 Objetivo 2")
+        match_obj = re.match(r"^(\d{2}\s*Objetivo\s*\d+)", l, re.IGNORECASE)
+        if match_obj:
+            obj_actual_codigo = match_obj.group(1).strip()
+            esperando_desc_obj = True
+            prod_actual = ""  # Se reinicia producto al cambiar de objetivo
             continue
 
-        # 3. Detectar Código del Objetivo (ej. "01 - Objetivo 1")
-        if re.match(r"^\d{2}\s*-\s*Objetivo\s*\d+", l, re.IGNORECASE):
-            # Si teníamos un objeto completo previo sin cerrar, lo guardamos
-            if obj_actual["codigo_obj"] and obj_actual["producto"]:
-                registros.append({
-                    "No.": len(registros) + 1,
-                    "Objetivo específico": (
-                        f"{obj_actual['codigo_obj']} {obj_actual['desc_obj']}".strip()
-                    ),
-                    "Producto": obj_actual["producto"],
-                    "Indicador MGA": obj_actual["indicador"],
-                    "Meta total": obj_actual["meta_total"],
-                })
-
-            # Reiniciar estructura para el nuevo objetivo
-            obj_actual = {
-                "codigo_obj": l,
-                "desc_obj": "",
-                "producto": "",
-                "indicador": "",
-                "meta_total": "",
-            }
-            esperando_campo = "DESC_OBJETIVO"
+        if esperando_desc_obj:
+            # Captura la descripción del objetivo (Ej: "1. Mantener estable la...")
+            obj_actual_desc = l
+            esperando_desc_obj = False
             continue
 
-        # 4. Asignar los campos según la secuencia exacta del texto
-        if esperando_campo == "DESC_OBJETIVO":
-            obj_actual["desc_obj"] = l
-            esperando_campo = None
-            continue
-
+        # 3. Detectar pivote Producto
         if l.lower() == "producto":
-            esperando_campo = "PRODUCTO"
+            esperando_producto = True
             continue
 
-        if esperando_campo == "PRODUCTO":
-            obj_actual["producto"] = l
-            esperando_campo = None
+        if esperando_producto:
+            prod_actual = l
+            esperando_producto = False
             continue
 
+        # 4. Detectar pivote Indicador
         if l.lower() == "indicador":
-            esperando_campo = "INDICADOR"
+            esperando_indicador = True
             continue
 
-        if esperando_campo == "INDICADOR":
-            obj_actual["indicador"] = l
-            esperando_campo = None
+        if esperando_indicador:
+            ind_codigo_texto = l
+            esperando_indicador = False
             continue
 
+        # 5. Capturar Meta Total
         if l.lower().startswith("meta total:"):
             partes_meta = l.split(":")
             if len(partes_meta) > 1:
-                obj_actual["meta_total"] = partes_meta[1].strip()
+                meta_total = partes_meta[1].strip()
             continue
 
-        # 5. Cierre de un indicador cuando llegamos a "Programación de indicadores"
+        # 6. Cierre del indicador al llegar a "Programación de indicadores"
         if "Programación de indicadores" in l:
-            if obj_actual["codigo_obj"] and obj_actual["producto"]:
+            if ind_codigo_texto:
                 registros.append({
                     "No.": len(registros) + 1,
                     "Objetivo específico": (
-                        f"{obj_actual['codigo_obj']} {obj_actual['desc_obj']}".strip()
+                        f"{obj_actual_codigo} - {obj_actual_desc}".strip()
                     ),
-                    "Producto": obj_actual["producto"],
-                    "Indicador MGA": obj_actual["indicador"],
-                    "Meta total": obj_actual["meta_total"],
+                    "Producto": prod_actual,
+                    "Indicador MGA": ind_codigo_texto,
+                    "Meta total": meta_total,
                 })
-                # Reseteamos para evitar duplicados
-                obj_actual = {
-                    "codigo_obj": "",
-                    "desc_obj": "",
-                    "producto": "",
-                    "indicador": "",
-                    "meta_total": "",
-                }
-            esperando_campo = None
+                # Se limpian solo los datos del indicador.
+                # Se MANTIENEN obj_actual y prod_actual para los siguientes indicadores.
+                ind_codigo_texto = ""
+                meta_total = ""
             continue
 
-    # Guardar en caso de que quede un último registro antes del final del documento
-    if obj_actual["codigo_obj"] and obj_actual["producto"]:
-        registros.append({
-            "No.": len(registros) + 1,
-            "Objetivo específico": (
-                f"{obj_actual['codigo_obj']} {obj_actual['desc_obj']}".strip()
-            ),
-            "Producto": obj_actual["producto"],
-            "Indicador MGA": obj_actual["indicador"],
-            "Meta total": obj_actual["meta_total"],
-        })
-
     return pd.DataFrame(registros)
-
 
 # ============================================================
 # FUNCIONES EXTRACTORAS: ARCHIVO WORD (PYTHON-DOCX)
