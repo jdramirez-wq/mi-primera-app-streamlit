@@ -74,49 +74,80 @@ def cruzar_con_plan_indicativo(df_indicadores, url_excel):
 
 
 # ============================================================
-# FUNCIONES EXTRACTORAS: MGA DESDE XML
+# FUNCIONES EXTRACTORAS: MGA DESDE XML (LÓGICA RELACIONAL OPTIMIZADA)
 # ============================================================
 def procesar_mga_xml(xml_buffer) -> pd.DataFrame:
-    """Parsea el archivo XML de la MGA DNP extrayendo Objetivos, Productos e Indicadores."""
+    """
+    Parsea el archivo XML real de la MGA DNP relacionando Objetivos Específicos
+    con sus Productos e Indicadores mediante SpecificObjectiveId.
+    """
     tree = ET.parse(xml_buffer)
     root = tree.getroot()
+
+    # 1. Mapear Objetivos Específicos por su <Id>
+    # Ruta estándar MGA: CentralProblem -> Causes -> Cause -> SpecificObjective
+    mapa_objetivos = {}
+    for cause in root.findall(".//Cause"):
+        obj_node = cause.find("SpecificObjective")
+        if obj_node is not None:
+            obj_id = obj_node.findtext("Id", "").strip()
+            obj_desc = obj_node.findtext("SpecificObjective", "").strip()
+            if obj_id and obj_desc:
+                mapa_objetivos[obj_id] = obj_desc
+
+    # Fallback si el árbol no usa nodos Cause/SpecificObjective explícitos
+    if not mapa_objetivos:
+        for obj in root.findall(".//SpecificObjective"):
+            obj_id = obj.findtext("Id", "").strip()
+            obj_desc = obj.findtext("SpecificObjective", "").strip() or obj.findtext("Description", "").strip()
+            if obj_id and obj_desc:
+                mapa_objetivos[obj_id] = obj_desc
+
+    # 2. Recorrer los Productos y vincular con su Objetivo Específico por SpecificObjectiveId
     registros = []
+    productos = root.findall(".//Product")
 
-    # Recorrido dinámico considerando diferentes estructuras comunes del XML MGA DNP
-    # Busca nodos de Objetivos Específicos o Productos
-    for idx, elem in enumerate(root.iter()):
-        tag_clean = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+    for idx, prod in enumerate(productos):
+        spec_obj_id = prod.findtext("SpecificObjectiveId", "").strip()
+        objetivo_texto = mapa_objetivos.get(spec_obj_id, "Sin Objetivo Asociado")
+
+        nombre_producto = prod.findtext("ProductName", "").strip()
+        auto_indicador = prod.findtext("AutoIndicatorName", "").strip()
+        fuente_verificacion = prod.findtext("VerificationSource", "").strip()
         
-        if tag_clean.lower() in ["objetivoespecifico", "objetivo_especifico", "producto"]:
-            obj_desc = elem.findtext(".//desObjetivo") or elem.findtext(".//Objetivo") or elem.findtext(".//Descripcion") or ""
-            prod_desc = elem.findtext(".//desProducto") or elem.findtext(".//NombreProducto") or elem.findtext(".//Producto") or ""
-            ind_desc = elem.findtext(".//desIndicador") or elem.findtext(".//NombreIndicador") or elem.findtext(".//Indicador") or ""
-            meta_tot = elem.findtext(".//valMeta") or elem.findtext(".//MetaTotal") or elem.findtext(".//Meta") or ""
+        # Meta/Cantidad
+        amount = prod.findtext("Amount", "").strip()
+        goal = prod.findtext("Goal", "").strip()
+        meta = amount if amount and amount != "0.0000" else goal
 
-            if prod_desc or ind_desc:
-                registros.append({
-                    "No.": len(registros) + 1,
-                    "Objetivo específico": obj_desc.strip(),
-                    "Producto MGA": prod_desc.strip(),
-                    "Indicador MGA": ind_desc.strip(),
-                    "Meta Total": meta_tot.strip(),
-                })
+        if nombre_producto or auto_indicador:
+            registros.append({
+                "No.": idx + 1,
+                "ID Obj. Específico": spec_obj_id,
+                "Objetivo Específico": objetivo_texto,
+                "Producto MGA": nombre_producto,
+                "Indicador MGA": auto_indicador,
+                "Fuente de Verificación": fuente_verificacion,
+                "Meta / Cantidad": meta,
+            })
 
-    # Si la estructura XML usa etiquetas genéricas o no jerárquicas
+    # Fallback genérico en caso de que la estructura XML sea no estándar o plana
     if not registros:
-        # Fallback genérico a lectura de nodos clave
-        for node in root.findall(".//*"):
+        for idx, node in enumerate(root.findall(".//*")):
             data = {child.tag.split("}")[-1]: child.text.strip() for child in node if child.text and child.text.strip()}
-            if "desProducto" in data or "NombreProducto" in data or "Producto" in data:
+            if "ProductName" in data or "desProducto" in data or "NombreProducto" in data:
                 registros.append({
                     "No.": len(registros) + 1,
-                    "Objetivo específico": data.get("desObjetivo", data.get("Objetivo", "")),
-                    "Producto MGA": data.get("desProducto", data.get("NombreProducto", data.get("Producto", ""))),
-                    "Indicador MGA": data.get("desIndicador", data.get("NombreIndicador", data.get("Indicador", ""))),
-                    "Meta Total": data.get("valMeta", data.get("MetaTotal", data.get("Meta", ""))),
+                    "ID Obj. Específico": data.get("SpecificObjectiveId", "N/A"),
+                    "Objetivo Específico": data.get("desObjetivo", data.get("Objetivo", "No detectado")),
+                    "Producto MGA": data.get("ProductName", data.get("desProducto", data.get("NombreProducto", ""))),
+                    "Indicador MGA": data.get("AutoIndicatorName", data.get("desIndicador", data.get("NombreIndicador", ""))),
+                    "Fuente de Verificación": data.get("VerificationSource", "No especificada"),
+                    "Meta / Cantidad": data.get("Amount", data.get("Goal", data.get("valMeta", "0"))),
                 })
 
-    return pd.DataFrame(registros).drop_duplicates()
+    df_resultado = pd.DataFrame(registros)
+    return df_resultado.drop_duplicates() if not df_resultado.empty else df_resultado
 
 
 # ============================================================
@@ -367,7 +398,7 @@ with tab_mga:
     if "df_mga_productos" in st.session_state:
         df_mga = st.session_state["df_mga_productos"]
         if not df_mga.empty:
-            st.markdown("### 📋 Resumen MGA desde XML")
+            st.markdown("### 📋 Resumen MGA desde XML (Objetivos ➔ Productos ➔ Fuentes de Verificación)")
             st.dataframe(df_mga, use_container_width=True, hide_index=True)
 
             csv_mga = df_mga.to_csv(index=False).encode("utf-8")
