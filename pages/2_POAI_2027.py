@@ -39,20 +39,26 @@ def leer_plan_indicativo_drive(url_excel):
     return pd.read_excel(url_excel, sheet_name="MP", header=1, engine="openpyxl")
 
 
-import re
-import docx
-import pandas as pd
-import pdfplumber
-import streamlit as st
-
 # ============================================================
-# FUNCION MEJORADA: PARSER MGA POR BLOQUES ROBUS
+# FUNCIONES EXTRACTORAS: PARSER MGA DESDE PDF Y TEXTO
 # ============================================================
+def extraer_texto_de_pdf(pdf_buffer) -> str:
+    """Extrae todo el texto plano contenido en el archivo PDF cargado."""
+    texto_completo = ""
+    with pdfplumber.open(pdf_buffer) as pdf:
+        for pagina in pdf.pages:
+            texto_pag = pagina.extract_text()
+            if texto_pag:
+                texto_completo += texto_pag + "\n"
+    return texto_completo
 
 
 def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
-    """Parsea el reporte MGA separando por bloques de Objetivo/Producto para evitar fallos por saltos de página o encabezados del PDF."""
-    # 1. Acotar la sección relevante (Indicadores de producto)
+    """Parsea el reporte MGA separando por bloques de Objetivo/Producto.
+
+    Inmune a encabezados de página, fechas impresas y saltos de línea.
+    """
+    # 1. Acotar la sección relevante entre 'Indicadores de producto' y 'Regionalización'
     if "Indicadores de producto" in texto_completo:
         bloque_seccion = texto_completo.split("Indicadores de producto")[-1]
     else:
@@ -120,6 +126,7 @@ def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
         })
 
     return pd.DataFrame(registros)
+
 
 # ============================================================
 # FUNCIONES EXTRACTORAS: ARCHIVO WORD (PYTHON-DOCX)
@@ -569,14 +576,14 @@ with tab_mga:
                 f"Se estructuraron exitosamente **{len(df_mga)}** registro(s) de la MGA:"
             )
 
-            # Tabla consolidada con las columnas parametrizadas
+            # Muestra la tabla consolidada
             st.dataframe(
                 df_mga,
                 use_container_width=True,
                 hide_index=True,
             )
 
-            # Botón para descarga rápida
+            # Opción de descarga
             csv_mga = df_mga.to_csv(index=False).encode("utf-8")
             st.download_button(
                 label="📥 Descargar Tabla MGA en CSV",
@@ -595,7 +602,6 @@ with tab_mga:
                 st.session_state.get("texto_pdf_extraido", ""),
                 height=250,
             )
-
 
 
 # ============================================================
