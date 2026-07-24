@@ -1,6 +1,7 @@
 import re
 import docx
 import pandas as pd
+import pdfplumber
 import streamlit as st
 
 # ============================================================
@@ -39,8 +40,19 @@ def leer_plan_indicativo_drive(url_excel):
 
 
 # ============================================================
-# FUNCIONES EXTRACTORAS: PARSER MGA DESDE TEXTO
+# FUNCIONES EXTRACTORAS: PARSER MGA DESDE PDF Y TEXTO
 # ============================================================
+def extraer_texto_de_pdf(pdf_buffer) -> str:
+    """Extrae todo el texto plano contenido en el archivo PDF cargado."""
+    texto_completo = ""
+    with pdfplumber.open(pdf_buffer) as pdf:
+        for pagina in pdf.pages:
+            texto_pag = pagina.extract_text()
+            if texto_pag:
+                texto_completo += texto_pag + "\n"
+    return texto_completo
+
+
 def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
     """Procesa el texto extraído del reporte MGA DNP y recupera la estructura jerárquica de Indicadores."""
     if "Indicadores de producto" in texto_completo:
@@ -391,16 +403,16 @@ def procesar_tablas_estandar(texto_bruto: str):
 # ============================================================
 st.title("📐 Control Previo y Revisión Técnica de Proyectos")
 st.write(
-    "Módulo integral para el análisis de Cadenas de Valor (.docx) y Reportes MGA DNP."
+    "Módulo integral para el análisis de Cadenas de Valor (.docx) y Reportes MGA DNP (.pdf)."
 )
 st.markdown("---")
 
 tab_cv, tab_mga = st.tabs([
     "📄 Cadena de Valor (DOCX)",
-    "📑 Reporte MGA DNP (Texto)",
+    "📑 Reporte MGA DNP (PDF)",
 ])
 
-# TAB 1
+# TAB 1: CADENA DE VALOR (DOCX)
 with tab_cv:
     st.subheader("Carga y Procesamiento de Cadena de Valor (.docx)")
     archivo_word = st.file_uploader(
@@ -482,28 +494,50 @@ with tab_cv:
         else:
             st.warning("No se detectaron actividades presupuestales en la Tabla 5.")
 
-# TAB 2
+# TAB 2: REPORTE MGA (PDF)
 with tab_mga:
-    st.subheader("📑 Parseador de Productos e Indicadores MGA")
-    texto_mga_input = st.text_area(
-        "Texto extraído del reporte MGA:", height=200
+    st.subheader("📑 Parseador de Productos e Indicadores MGA desde PDF")
+    archivo_pdf = st.file_uploader(
+        "📂 Sube aquí el reporte PDF descargado de la MGA",
+        type=["pdf"],
+        key="uploader_pdf",
     )
 
-    if st.button("Procesar Texto MGA"):
-        if texto_mga_input.strip():
-            df_mga = extraer_productos_mga_texto(texto_mga_input)
-            if not df_mga.empty:
-                st.success(
-                    f"Se extrajeron **{len(df_mga)}** indicador(es) del reporte MGA."
-                )
-                st.dataframe(df_mga, use_container_width=True)
-                st.session_state["df_mga_productos"] = df_mga
-            else:
-                st.warning(
-                    "No se pudo identificar el patrón de objetivos e indicadores en el texto ingresado."
-                )
+    if archivo_pdf is not None:
+        if (
+            "ultimo_archivo_pdf" not in st.session_state
+            or st.session_state["ultimo_archivo_pdf"] != archivo_pdf.name
+        ):
+            with st.spinner("⏳ Extrayendo texto y procesando datos del PDF MGA..."):
+                try:
+                    texto_pdf = extraer_texto_de_pdf(archivo_pdf)
+                    st.session_state["texto_pdf_extraido"] = texto_pdf
+
+                    df_mga = extraer_productos_mga_texto(texto_pdf)
+                    st.session_state["df_mga_productos"] = df_mga
+                    st.session_state["ultimo_archivo_pdf"] = archivo_pdf.name
+                    st.success("✅ ¡PDF procesado correctamente!")
+                except Exception as e:
+                    st.error(f"🚨 Error en la lectura del archivo PDF: {e}")
+
+    if "df_mga_productos" in st.session_state:
+        df_mga = st.session_state["df_mga_productos"]
+        if not df_mga.empty:
+            st.success(
+                f"Se extrajeron **{len(df_mga)}** indicador(es) del reporte MGA."
+            )
+            st.dataframe(df_mga, use_container_width=True)
         else:
-            st.info("Por favor ingresa texto para procesar.")
+            st.warning(
+                "No se pudo identificar la estructura de indicadores de producto en el PDF subido."
+            )
+
+        with st.expander("🔍 Ver texto plano extraído del PDF"):
+            st.text_area(
+                "Texto MGA",
+                st.session_state.get("texto_pdf_extraido", ""),
+                height=250,
+            )
             
 # ============================================================
 # COMPONENTE DE AUDITORÍA: WORD VS. PLAN INDICATIVO (PI)
