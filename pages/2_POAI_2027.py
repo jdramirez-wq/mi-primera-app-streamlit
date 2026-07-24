@@ -428,7 +428,9 @@ with tab_mga:
             mime="text/csv",
         )
 
-# TAB 3: ANÁLISIS Y CRUCE DE INFORMACIÓN
+# ============================================================
+# TAB 3: ANÁLISIS Y CRUCE DE INFORMACIÓN (CON ESTILIZADO AZUL)
+# ============================================================
 with tab_cruce:
     st.subheader("🔗 Cruce de Cadena de Valor con Plan Indicativo (Drive)")
 
@@ -443,9 +445,30 @@ with tab_cruce:
                 st.error(f"🚨 {err}")
             else:
                 st.success("✅ Cruce realizado correctamente.")
-                st.markdown("### 📊 Matriz Consolidada")
-                st.dataframe(df_cruzado, use_container_width=True)
+                
+                # Identificamos las columnas que vienen del Word
+                cols_originales = set(df_ind.columns)
+                
+                # Función para aplicar el fondo azul claro a las columnas traídas de Drive
+                def destacar_columnas_drive(val, col_name):
+                    # Si la columna no estaba en el df original de Word, viene de Drive
+                    if col_name not in cols_originales:
+                        return "background-color: #E8F4F8; color: #1E3A8A;"
+                    return ""
 
+                # Aplicamos el estilo por columna al DataFrame
+                df_estilizado = df_cruzado.style.apply(
+                    lambda col: [destacar_columnas_drive(v, col.name) for v in col],
+                    axis=0
+                )
+
+                st.markdown("### 📊 Matriz Consolidada")
+                st.caption("🟦 *Las columnas con fondo azul claro corresponden a los datos extraídos del Plan Indicativo (Google Drive).*")
+                
+                # Renderizamos la tabla estilizada
+                st.dataframe(df_estilizado, use_container_width=True)
+
+                # Para la descarga mantenemos el DataFrame plano (sin CSS)
                 csv_cruzado = df_cruzado.to_csv(index=False).encode("utf-8")
                 st.download_button(
                     label="📥 Descargar Matriz Cruzada en CSV",
