@@ -4,11 +4,6 @@ import pandas as pd
 import pdfplumber
 import streamlit as st
 
-# Módulos para OCR (lectura de PDFs escaneados / tipo imagen)
-from pdf2image import convert_from_bytes
-import pytesseract
-from PIL import Image
-
 # ============================================================
 # CONFIGURACIÓN INICIAL DE LA PÁGINA
 # ============================================================
@@ -42,156 +37,157 @@ def leer_plan_indicativo_drive(url_excel):
 
 
 # ============================================================
-# ESTRATEGIA OCR Y LECTURA HÍBRIDA DE PDF
+# FUNCIONES EXTRACTORAS: PARSER MGA LÍNEA POR LÍNEA
 # ============================================================
-def extraer_texto_pagina(pagina_pdf, num_pag, pdf_bytes) -> str:
-    """Extrae texto nativo de la página con pdfplumber.
-    Si es escaneada o tipo imagen, aplica OCR con pytesseract.
-    """
-    texto = pagina_pdf.extract_text() or ""
-    
-    # Si el texto nativo es insuficiente, aplicamos OCR a la página específica
-    if len(texto.strip()) < 10:
-        try:
-            # Convertir únicamente la página requerida a imagen
-            imagenes_pag = convert_from_bytes(
-                pdf_bytes, 
-                first_page=num_pag, 
-                last_page=num_pag, 
-                dpi=200
-            )
-            if imagenes_pag:
-                texto_ocr = pytesseract.image_to_string(imagenes_pag[0], lang="spa")
-                if len(texto_ocr.strip()) > len(texto.strip()):
-                    texto = texto_ocr
-        except Exception as e:
-            # En caso de fallo de OCR (ej. tesseract/poppler no instalado en servidor)
-            st.warning(f"⚠️ No se pudo procesar OCR en la página {num_pag}: {e}")
-            
-    return texto.strip()
-
-
-def extraer_texto_desde_seccion(
-    pdf_buffer, clave_inicio="Indicadores de producto"
-):
-    """Localiza la primera página que contiene 'clave_inicio' (nativa o mediante OCR)
-    y extrae el texto de esa página en adelante.
-    """
-    pdf_bytes = pdf_buffer.getvalue() if hasattr(pdf_buffer, "getvalue") else pdf_buffer.read()
-    if hasattr(pdf_buffer, "seek"):
-        pdf_buffer.seek(0)
-
-    texto_filtrado = ""
-    pagina_inicio = None
-    total_paginas = 0
-
+def extraer_texto_de_pdf(pdf_buffer) -> str:
+    """Extrae todo el texto plano contenido en el archivo PDF cargado."""
+    texto_completo = ""
     with pdfplumber.open(pdf_buffer) as pdf:
-        total_paginas = len(pdf.pages)
-
-        for num_pag, pagina in enumerate(pdf.pages, start=1):
-            texto_pag = extraer_texto_pagina(pagina, num_pag, pdf_bytes)
-
-            # Si aún no encontramos la página de inicio, la buscamos
-            if pagina_inicio is None:
-                if clave_inicio.lower() in texto_pag.lower():
-                    pagina_inicio = num_pag
-
-            # Si ya identificamos la página de inicio, acumulamos el texto
-            if pagina_inicio is not None:
-                texto_filtrado += f"\n--- PÁGINA {num_pag} ---\n" + texto_pag
-
-    return texto_filtrado, pagina_inicio, total_paginas, pdf_bytes
+        for pagina in pdf.pages:
+            texto_pag = pagina.extract_text()
+            if texto_pag:
+                texto_completo += texto_pag + "\n"
+    return texto_completo
 
 
-def extraer_productos_mga_texto(texto_recortado: str) -> pd.DataFrame:
-    """Procesa el texto recortado de la MGA para estructurar la tabla de Objetivos,
-    Productos e Indicadores.
+def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
+    """Parsea el reporte MGA línea por línea evaluando la secuencia estricta del DNP:
+
+    Indicadores de producto -> XX - Objetivo X -> Producto -> Indicador -> Meta total -> Programación de indicadores.
     """
-    lineas = texto_recortado.splitlines()
+    lineas = texto_completo.splitlines()
     registros = []
 
-    en_seccion_indicadores = True  # Ya viene recortado desde la página clave
-    obj_actual_codigo = ""
-    obj_actual_desc = ""
-    prod_actual = ""
+    # Banderas y variables de estado
+    capturando_seccion = False
+    esperando_campo = None
 
-    ind_codigo_texto = ""
-    meta_total = ""
-
-    esperando_desc_obj = False
-    esperando_producto = False
-    esperando_indicador = False
+    # Objeto temporal para ir acumulando la información del indicador actual
+    obj_actual = {
+        "codigo_obj": "",
+        "desc_obj": "",
+        "producto": "",
+        "indicador": "",
+        "meta_total": "",
+    }
 
     for linea in lineas:
         l = linea.strip()
-        if not l or l.startswith("--- PÁGINA"):
+        if not l:
             continue
 
-        # Frenar la extracción si se llega a secciones posteriores del reporte MGA
+        # Ignore ruido recurrente de encabezados / pies de página MGA
         if (
-            "Programación / Indicadores de gestión" in l
-            or "Fuentes de financiación" in l
+            l.startswith("Impreso el")
+            or l.startswith("Página ")
+            or "MEJORAMIENTO INTEGRAL" in l
+            or "DEPARTAMENTO DEL VALLE" in l
         ):
-            en_seccion_indicadores = False
-
-        if not en_seccion_indicadores:
-            break
-
-        # Captura de Objetivo
-        match_obj = re.match(r"^(\d{2}\s*Objetivo\s*\d+)", l, re.IGNORECASE)
-        if match_obj:
-            obj_actual_codigo = match_obj.group(1).strip()
-            esperando_desc_obj = True
-            prod_actual = ""
             continue
 
-        if esperando_desc_obj:
-            obj_actual_desc = l
-            esperando_desc_obj = False
+        # 1. Detectar el inicio global de la sección
+        if "Indicadores de producto" in l and not l.startswith(
+            "Programación /"
+        ):
+            capturando_seccion = True
             continue
 
-        # Captura de Producto
-        if l.lower() == "producto":
-            esperando_producto = True
+        # 2. Si nos topamos con Regionalización o Focalización, cerramos la captura global
+        if "Programación / Regionalización" in l or "Focalización" in l:
+            capturando_seccion = False
+
+        if not capturando_seccion:
             continue
 
-        if esperando_producto:
-            prod_actual = l
-            esperando_producto = False
-            continue
-
-        # Captura de Indicador
-        if l.lower() == "indicador":
-            esperando_indicador = True
-            continue
-
-        if esperando_indicador:
-            ind_codigo_texto = l
-            esperando_indicador = False
-            continue
-
-        # Captura de Meta Total
-        if l.lower().startswith("meta total:"):
-            partes_meta = l.split(":", 1)
-            if len(partes_meta) > 1:
-                meta_total = partes_meta[1].strip()
-            continue
-
-        # Cierre del registro por cada bloque
-        if "Programación de indicadores" in l:
-            if ind_codigo_texto:
+        # 3. Detectar Código del Objetivo (ej. "01 - Objetivo 1")
+        if re.match(r"^\d{2}\s*-\s*Objetivo\s*\d+", l, re.IGNORECASE):
+            # Si teníamos un objeto completo previo sin cerrar, lo guardamos
+            if obj_actual["codigo_obj"] and obj_actual["producto"]:
                 registros.append({
                     "No.": len(registros) + 1,
                     "Objetivo específico": (
-                        f"{obj_actual_codigo} - {obj_actual_desc}".strip()
+                        f"{obj_actual['codigo_obj']} {obj_actual['desc_obj']}".strip()
                     ),
-                    "Producto": prod_actual,
-                    "Indicador MGA": ind_codigo_texto,
-                    "Meta total": meta_total,
+                    "Producto": obj_actual["producto"],
+                    "Indicador MGA": obj_actual["indicador"],
+                    "Meta total": obj_actual["meta_total"],
                 })
-                ind_codigo_texto = ""
-                meta_total = ""
+
+            # Reiniciar estructura para el nuevo objetivo
+            obj_actual = {
+                "codigo_obj": l,
+                "desc_obj": "",
+                "producto": "",
+                "indicador": "",
+                "meta_total": "",
+            }
+            esperando_campo = "DESC_OBJETIVO"
             continue
+
+        # 4. Asignar los campos según la secuencia exacta del texto
+        if esperando_campo == "DESC_OBJETIVO":
+            obj_actual["desc_obj"] = l
+            esperando_campo = None
+            continue
+
+        if l.lower() == "producto":
+            esperando_campo = "PRODUCTO"
+            continue
+
+        if esperando_campo == "PRODUCTO":
+            obj_actual["producto"] = l
+            esperando_campo = None
+            continue
+
+        if l.lower() == "indicador":
+            esperando_campo = "INDICADOR"
+            continue
+
+        if esperando_campo == "INDICADOR":
+            obj_actual["indicador"] = l
+            esperando_campo = None
+            continue
+
+        if l.lower().startswith("meta total:"):
+            partes_meta = l.split(":")
+            if len(partes_meta) > 1:
+                obj_actual["meta_total"] = partes_meta[1].strip()
+            continue
+
+        # 5. Cierre de un indicador cuando llegamos a "Programación de indicadores"
+        if "Programación de indicadores" in l:
+            if obj_actual["codigo_obj"] and obj_actual["producto"]:
+                registros.append({
+                    "No.": len(registros) + 1,
+                    "Objetivo específico": (
+                        f"{obj_actual['codigo_obj']} {obj_actual['desc_obj']}".strip()
+                    ),
+                    "Producto": obj_actual["producto"],
+                    "Indicador MGA": obj_actual["indicador"],
+                    "Meta total": obj_actual["meta_total"],
+                })
+                # Reseteamos para evitar duplicados
+                obj_actual = {
+                    "codigo_obj": "",
+                    "desc_obj": "",
+                    "producto": "",
+                    "indicador": "",
+                    "meta_total": "",
+                }
+            esperando_campo = None
+            continue
+
+    # Guardar en caso de que quede un último registro antes del final del documento
+    if obj_actual["codigo_obj"] and obj_actual["producto"]:
+        registros.append({
+            "No.": len(registros) + 1,
+            "Objetivo específico": (
+                f"{obj_actual['codigo_obj']} {obj_actual['desc_obj']}".strip()
+            ),
+            "Producto": obj_actual["producto"],
+            "Indicador MGA": obj_actual["indicador"],
+            "Meta total": obj_actual["meta_total"],
+        })
 
     return pd.DataFrame(registros)
 
@@ -278,19 +274,34 @@ def procesar_tablas_estandar(texto_bruto: str):
         encabezado_tabla = lineas[0].lower()
 
         # TABLA 1
-        if "no.cv" in encabezado_tabla and "objetivo general proyecto" in encabezado_tabla:
+        if (
+            "no.cv" in encabezado_tabla
+            and "objetivo general proyecto" in encabezado_tabla
+        ):
             for l in lineas[1:]:
                 partes = descomponer_linea(l)
                 if partes and partes[0].isdigit():
                     idx = int(partes[0])
                     if idx not in dicc_indicadores:
                         dicc_indicadores[idx] = {}
-                    dicc_indicadores[idx]["No.CV"] = partes[1] if len(partes) > 1 else ""
-                    dicc_indicadores[idx]["Dependencia"] = partes[2] if len(partes) > 2 else ""
-                    dicc_indicadores[idx]["Nombre Proyecto"] = partes[3] if len(partes) > 3 else ""
-                    dicc_indicadores[idx]["Fecha CV"] = partes[4] if len(partes) > 4 else ""
-                    dicc_indicadores[idx]["Objetivo General Proyecto"] = partes[5] if len(partes) > 5 else ""
-                    dicc_indicadores[idx]["Objetivo Específico"] = partes[6] if len(partes) > 6 else ""
+                    dicc_indicadores[idx]["No.CV"] = (
+                        partes[1] if len(partes) > 1 else ""
+                    )
+                    dicc_indicadores[idx]["Dependencia"] = (
+                        partes[2] if len(partes) > 2 else ""
+                    )
+                    dicc_indicadores[idx]["Nombre Proyecto"] = (
+                        partes[3] if len(partes) > 3 else ""
+                    )
+                    dicc_indicadores[idx]["Fecha CV"] = (
+                        partes[4] if len(partes) > 4 else ""
+                    )
+                    dicc_indicadores[idx]["Objetivo General Proyecto"] = (
+                        partes[5] if len(partes) > 5 else ""
+                    )
+                    dicc_indicadores[idx]["Objetivo Específico"] = (
+                        partes[6] if len(partes) > 6 else ""
+                    )
 
                     if (
                         nombre_proyecto_tabla == "No detectado"
@@ -300,84 +311,188 @@ def procesar_tablas_estandar(texto_bruto: str):
                         nombre_proyecto_tabla = partes[3]
 
         # TABLA 2
-        elif "sector mga-sap" in encabezado_tabla and "subprograma plan" in encabezado_tabla:
+        elif (
+            "sector mga-sap" in encabezado_tabla
+            and "subprograma plan" in encabezado_tabla
+        ):
             for l in lineas[1:]:
                 partes = descomponer_linea(l)
                 if partes and partes[0].isdigit():
                     idx = int(partes[0])
                     if idx in dicc_indicadores:
-                        dicc_indicadores[idx]["Sector MGA-SAP"] = partes[1] if len(partes) > 1 else ""
-                        dicc_indicadores[idx]["Línea Estratégica"] = partes[2] if len(partes) > 2 else ""
-                        dicc_indicadores[idx]["Programa Plan de Desarrollo"] = partes[3] if len(partes) > 3 else ""
-                        dicc_indicadores[idx]["Programa MGA"] = partes[4] if len(partes) > 4 else ""
-                        dicc_indicadores[idx]["Meta de Resultado"] = partes[5] if len(partes) > 5 else ""
-                        dicc_indicadores[idx]["Subprograma Plan"] = partes[6] if len(partes) > 6 else ""
+                        dicc_indicadores[idx]["Sector MGA-SAP"] = (
+                            partes[1] if len(partes) > 1 else ""
+                        )
+                        dicc_indicadores[idx]["Línea Estratégica"] = (
+                            partes[2] if len(partes) > 2 else ""
+                        )
+                        dicc_indicadores[idx][
+                            "Programa Plan de Desarrollo"
+                        ] = partes[3] if len(partes) > 3 else ""
+                        dicc_indicadores[idx]["Programa MGA"] = (
+                            partes[4] if len(partes) > 4 else ""
+                        )
+                        dicc_indicadores[idx]["Meta de Resultado"] = (
+                            partes[5] if len(partes) > 5 else ""
+                        )
+                        dicc_indicadores[idx]["Subprograma Plan"] = (
+                            partes[6] if len(partes) > 6 else ""
+                        )
 
         # TABLA 3
-        elif "meta producto plan" in encabezado_tabla and "meta total mga" in encabezado_tabla:
+        elif (
+            "meta producto plan" in encabezado_tabla
+            and "meta total mga" in encabezado_tabla
+        ):
             for l in lineas[1:]:
                 partes = descomponer_linea(l)
                 if partes and partes[0].isdigit():
                     idx = int(partes[0])
                     if idx in dicc_indicadores:
-                        meta_producto_texto = partes[1] if len(partes) > 1 else ""
-                        dicc_indicadores[idx]["Meta Producto Plan"] = meta_producto_texto
+                        meta_producto_texto = (
+                            partes[1] if len(partes) > 1 else ""
+                        )
+                        dicc_indicadores[idx]["Meta Producto Plan"] = (
+                            meta_producto_texto
+                        )
 
                         match_mp = re.search(r"(MP\d+)", meta_producto_texto)
-                        dicc_indicadores[idx]["Código MP"] = match_mp.group(1) if match_mp else "Sin Código"
+                        dicc_indicadores[idx]["Código MP"] = (
+                            match_mp.group(1) if match_mp else "Sin Código"
+                        )
 
-                        dicc_indicadores[idx]["P.G. PI"] = partes[2] if len(partes) > 2 else ""
-                        dicc_indicadores[idx]["2024 PI"] = partes[3] if len(partes) > 3 else ""
-                        dicc_indicadores[idx]["2025 PI"] = partes[4] if len(partes) > 4 else ""
-                        dicc_indicadores[idx]["2026 PI"] = partes[5] if len(partes) > 5 else ""
-                        dicc_indicadores[idx]["2027 PI"] = partes[6] if len(partes) > 6 else ""
-                        dicc_indicadores[idx]["Código y Nombre Producto Catalogo - MP"] = partes[7] if len(partes) > 7 else ""
-                        dicc_indicadores[idx]["Indicador de Producto Catalogo - MP"] = partes[8] if len(partes) > 8 else ""
-                        dicc_indicadores[idx]["Unidad de Medida"] = partes[9] if len(partes) > 9 else ""
-                        dicc_indicadores[idx]["Meta Total MGA"] = partes[10] if len(partes) > 10 else ""
-                        dicc_indicadores[idx]["2024 MGA"] = partes[11] if len(partes) > 11 else ""
-                        dicc_indicadores[idx]["2025 MGA"] = partes[12] if len(partes) > 12 else ""
-                        dicc_indicadores[idx]["2026 MGA"] = partes[13] if len(partes) > 13 else ""
-                        dicc_indicadores[idx]["2027 MGA"] = partes[14] if len(partes) > 14 else ""
+                        dicc_indicadores[idx]["P.G. PI"] = (
+                            partes[2] if len(partes) > 2 else ""
+                        )
+                        dicc_indicadores[idx]["2024 PI"] = (
+                            partes[3] if len(partes) > 3 else ""
+                        )
+                        dicc_indicadores[idx]["2025 PI"] = (
+                            partes[4] if len(partes) > 4 else ""
+                        )
+                        dicc_indicadores[idx]["2026 PI"] = (
+                            partes[5] if len(partes) > 5 else ""
+                        )
+                        dicc_indicadores[idx]["2027 PI"] = (
+                            partes[6] if len(partes) > 6 else ""
+                        )
+                        dicc_indicadores[idx][
+                            "Código y Nombre Producto Catalogo - MP"
+                        ] = partes[7] if len(partes) > 7 else ""
+                        dicc_indicadores[idx][
+                            "Indicador de Producto Catalogo - MP"
+                        ] = partes[8] if len(partes) > 8 else ""
+                        dicc_indicadores[idx]["Unidad de Medida"] = (
+                            partes[9] if len(partes) > 9 else ""
+                        )
+                        dicc_indicadores[idx]["Meta Total MGA"] = (
+                            partes[10] if len(partes) > 10 else ""
+                        )
+                        dicc_indicadores[idx]["2024 MGA"] = (
+                            partes[11] if len(partes) > 11 else ""
+                        )
+                        dicc_indicadores[idx]["2025 MGA"] = (
+                            partes[12] if len(partes) > 12 else ""
+                        )
+                        dicc_indicadores[idx]["2026 MGA"] = (
+                            partes[13] if len(partes) > 13 else ""
+                        )
+                        dicc_indicadores[idx]["2027 MGA"] = (
+                            partes[14] if len(partes) > 14 else ""
+                        )
 
         # TABLA 4
-        elif "observación por indicador mga" in encabezado_tabla and "producto cv - mga" in encabezado_tabla:
+        elif (
+            "observación por indicador mga" in encabezado_tabla
+            and "producto cv - mga" in encabezado_tabla
+        ):
             for l in lineas[1:]:
                 partes = descomponer_linea(l)
                 if partes and partes[0].isdigit():
                     idx = int(partes[0])
                     if idx in dicc_indicadores:
-                        dicc_indicadores[idx]["Observación por Indicador MGA - Formulador"] = partes[1] if len(partes) > 1 else ""
-                        dicc_indicadores[idx]["Producto CV - MGA"] = partes[2] if len(partes) > 2 else ""
-                        dicc_indicadores[idx]["Indicador de Producto CV - MGA"] = partes[3] if len(partes) > 3 else ""
-                        dicc_indicadores[idx]["Tipo prod."] = partes[4] if len(partes) > 4 else ""
-                        dicc_indicadores[idx]["Tipo prod2"] = partes[5] if len(partes) > 5 else ""
+                        dicc_indicadores[idx][
+                            "Observación por Indicador MGA - Formulador"
+                        ] = partes[1] if len(partes) > 1 else ""
+                        dicc_indicadores[idx]["Producto CV - MGA"] = (
+                            partes[2] if len(partes) > 2 else ""
+                        )
+                        dicc_indicadores[idx][
+                            "Indicador de Producto CV - MGA"
+                        ] = partes[3] if len(partes) > 3 else ""
+                        dicc_indicadores[idx]["Tipo prod."] = (
+                            partes[4] if len(partes) > 4 else ""
+                        )
+                        dicc_indicadores[idx]["Tipo prod2"] = (
+                            partes[5] if len(partes) > 5 else ""
+                        )
 
         # TABLA 5
-        elif "cod. meta de producto" in encabezado_tabla or "actividad del proyecto" in encabezado_tabla:
-            columnas = [c.strip().lower() for c in lineas[0].split("|") if c.strip()]
-            pos_mp = next((i for i, c in enumerate(columnas) if "cod. meta" in c or "producto" in c), 0)
-            pos_prod = next((i for i, c in enumerate(columnas) if "producto mga" in c), 1)
-            pos_act = next((i for i, c in enumerate(columnas) if "actividad" in c), 2)
-            pos_rec = next((i for i, c in enumerate(columnas) if "recurso total" in c or "total 2027" in c), -1)
+        elif (
+            "cod. meta de producto" in encabezado_tabla
+            or "actividad del proyecto" in encabezado_tabla
+        ):
+            columnas = [
+                c.strip().lower() for c in lineas[0].split("|") if c.strip()
+            ]
+            pos_mp = next(
+                (
+                    i
+                    for i, c in enumerate(columnas)
+                    if "cod. meta" in c or "producto" in c
+                ),
+                0,
+            )
+            pos_prod = next(
+                (i for i, c in enumerate(columnas) if "producto mga" in c), 1
+            )
+            pos_act = next(
+                (i for i, c in enumerate(columnas) if "actividad" in c), 2
+            )
+            pos_rec = next(
+                (
+                    i
+                    for i, c in enumerate(columnas)
+                    if "recurso total" in c or "total 2027" in c
+                ),
+                -1,
+            )
 
             for l in lineas[1:]:
                 partes = descomponer_linea(l)
                 texto_linea = " ".join(partes).upper()
 
-                if "TOTAL RECURSOS 2027" in texto_linea or "PROYECTO DE INVERSIÓN" in texto_linea:
+                if (
+                    "TOTAL RECURSOS 2027" in texto_linea
+                    or "PROYECTO DE INVERSIÓN" in texto_linea
+                ):
                     recurso_total_proyecto = partes[-1] if partes else "$0"
                     continue
 
-                if len(partes) >= 3 and "FIRMA" not in partes[0].upper() and partes[0] != "":
-                    col_mp = partes[pos_mp] if len(partes) > pos_mp else ""
-                    match_mp_act = re.search(r"(MP\d+)", col_mp)
+                if (
+                    len(partes) >= 3
+                    and "FIRMA" not in partes[0].upper()
+                    and partes[0] != ""
+                ):
+                    match_mp_act = re.search(r"(MP\d+)", partes[pos_mp])
                     actividad = {
-                        "COD. META DE PRODUCTO": col_mp,
-                        "Código MP Extrayendo": match_mp_act.group(1) if match_mp_act else "Sin Código",
-                        "PRODUCTO MGA (COD+TEXTO)": partes[pos_prod] if len(partes) > pos_prod else "",
-                        "ACTIVIDAD DEL PROYECTO": partes[pos_act] if len(partes) > pos_act else "",
-                        "RECURSO TOTAL 2027": partes[pos_rec] if (0 <= pos_rec < len(partes)) else "$0",
+                        "COD. META DE PRODUCTO": (
+                            partes[pos_mp] if len(partes) > pos_mp else ""
+                        ),
+                        "Código MP Extrayendo": (
+                            match_mp_act.group(1)
+                            if match_mp_act
+                            else "Sin Código"
+                        ),
+                        "PRODUCTO MGA (COD+TEXTO)": (
+                            partes[pos_prod] if len(partes) > pos_prod else ""
+                        ),
+                        "ACTIVIDAD DEL PROYECTO": (
+                            partes[pos_act] if len(partes) > pos_act else ""
+                        ),
+                        "RECURSO TOTAL 2027": (
+                            partes[pos_rec] if pos_rec < len(partes) else "$0"
+                        ),
                     }
                     lista_actividades_poai.append(actividad)
 
@@ -396,13 +511,14 @@ def procesar_tablas_estandar(texto_bruto: str):
 # INTERFAZ STREAMLIT
 # ============================================================
 st.title("📐 Control Previo y Revisión Técnica de Proyectos")
-st.write("Módulo integral para el análisis de Cadenas de Valor (.docx), Reportes MGA DNP (.pdf) e imágenes/PDFs escaneados y Plan Indicativo (Excel).")
+st.write(
+    "Módulo integral para el análisis de Cadenas de Valor (.docx) y Reportes MGA DNP (.pdf)."
+)
 st.markdown("---")
 
-tab_cv, tab_mga, tab_pi = st.tabs([
+tab_cv, tab_mga = st.tabs([
     "📄 Cadena de Valor (DOCX)",
-    "📑 Reporte MGA DNP (PDF/OCR)",
-    "📊 Plan Indicativo (Drive)"
+    "📑 Reporte MGA DNP (PDF)",
 ])
 
 # TAB 1: CADENA DE VALOR (DOCX)
@@ -435,8 +551,12 @@ with tab_cv:
                     st.session_state["metadatos"] = metadatos
                     st.session_state["df_indicadores_estandar"] = df_ind
                     st.session_state["df_poai_estandar"] = df_poai
-                    st.session_state["total_presupuesto_poai"] = total_presupuesto
-                    st.session_state["proyecto_nombre_tabla"] = proyecto_nombre_tabla
+                    st.session_state["total_presupuesto_poai"] = (
+                        total_presupuesto
+                    )
+                    st.session_state["proyecto_nombre_tabla"] = (
+                        proyecto_nombre_tabla
+                    )
                     st.session_state["ultimo_archivo_word"] = archivo_word.name
                     st.success("✅ ¡Cadena de Valor procesada exitosamente!")
                 except Exception as e:
@@ -452,7 +572,9 @@ with tab_cv:
         )
         c2.text_input(
             "Código de Proyecto (PS-SAP):",
-            value=st.session_state.get("metadatos", {}).get("codigo_pi", ""),
+            value=st.session_state.get("metadatos", {}).get(
+                "codigo_pi", ""
+            ),
             disabled=True,
         )
         c3.text_input(
@@ -461,7 +583,9 @@ with tab_cv:
             disabled=True,
         )
 
-        st.markdown("### 📊 Matriz Completa de Indicadores y Objetivos (Tablas 1-4)")
+        st.markdown(
+            "### 📊 Matriz Completa de Indicadores y Objetivos (Tablas 1-4)"
+        )
         df_ind = st.session_state["df_indicadores_estandar"]
         if not df_ind.empty:
             st.dataframe(df_ind, use_container_width=True)
@@ -479,13 +603,13 @@ with tab_cv:
         else:
             st.warning("No se detectaron actividades presupuestales en la Tabla 5.")
 
-# TAB 2: REPORTE MGA (PDF / OCR)
+# TAB 2: REPORTE MGA (PDF)
 with tab_mga:
-    st.subheader("📑 Visor y Extractor de Texto MGA DNP (Soporte Nativo y OCR)")
+    st.subheader("📑 Resumen Ejecutivo MGA DNP (Objetivos, Productos y Metas)")
     archivo_pdf = st.file_uploader(
-        "📂 Sube el archivo PDF del reporte MGA DNP (Texto o Escaneado)",
+        "📂 Sube el archivo PDF del reporte MGA DNP",
         type=["pdf"],
-        key="uploader_pdf_directo",
+        key="uploader_pdf",
     )
 
     if archivo_pdf is not None:
@@ -493,116 +617,54 @@ with tab_mga:
             "ultimo_archivo_pdf" not in st.session_state
             or st.session_state["ultimo_archivo_pdf"] != archivo_pdf.name
         ):
-            with st.spinner(
-                "🔍 Escaneando PDF, aplicando OCR si es necesario y buscando 'Indicadores de producto'..."
-            ):
+            with st.spinner("⏳ Extrayendo datos y consolidando la tabla resumen..."):
                 try:
-                    (
-                        texto_seccion,
-                        pag_inicio,
-                        total_pags,
-                        pdf_bytes,
-                    ) = extraer_texto_desde_seccion(
-                        archivo_pdf, clave_inicio="Indicadores de producto"
-                    )
+                    texto_pdf = extraer_texto_de_pdf(archivo_pdf)
+                    st.session_state["texto_pdf_extraido"] = texto_pdf
 
-                    st.session_state["texto_mga_seccion"] = texto_seccion
-                    st.session_state["pag_inicio_mga"] = pag_inicio
-                    st.session_state["total_pags_mga"] = total_pags
-                    st.session_state["pdf_bytes_mga"] = pdf_bytes
-
-                    # Estructurar Dataframe a partir del texto recortado
-                    if pag_inicio:
-                        df_mga = extraer_productos_mga_texto(texto_seccion)
-                        st.session_state["df_mga_productos"] = df_mga
-                    else:
-                        st.session_state["df_mga_productos"] = pd.DataFrame()
-
+                    df_mga = extraer_productos_mga_texto(texto_pdf)
+                    st.session_state["df_mga_productos"] = df_mga
                     st.session_state["ultimo_archivo_pdf"] = archivo_pdf.name
+                    st.success("✅ ¡Reporte MGA analizado correctamente!")
                 except Exception as e:
                     st.error(f"🚨 Ocurrió un error al procesar el PDF MGA: {e}")
 
-    if "texto_mga_seccion" in st.session_state:
-        pag_inicio = st.session_state.get("pag_inicio_mga")
-        total_pags = st.session_state.get("total_pags_mga")
-        texto_seccion = st.session_state.get("texto_mga_seccion", "")
+    if "df_mga_productos" in st.session_state:
+        df_mga = st.session_state["df_mga_productos"]
 
-        if pag_inicio:
-            st.success(
-                f"✅ ¡Sección detectada! Mostrando contenido desde la **Página {pag_inicio}** de {total_pags}."
+        if not df_mga.empty:
+            st.markdown(
+                "### 📋 Tabla Resumen: Objetivos Específicos, Productos, Indicadores y Metas MGA"
+            )
+            st.write(
+                f"Se estructuraron exitosamente **{len(df_mga)}** registro(s) de la MGA:"
             )
 
-            # Mostrar Matriz Estructurada (Dataframe)
-            df_mga = st.session_state.get("df_mga_productos", pd.DataFrame())
-            if not df_mga.empty:
-                st.markdown("### 📋 Tabla Resumen Extraída de la MGA")
-                st.dataframe(df_mga, use_container_width=True, hide_index=True)
-
-                csv_mga = df_mga.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    label="📥 Descargar Tabla MGA en CSV",
-                    data=csv_mga,
-                    file_name="resumen_mga_productos.csv",
-                    mime="text/csv",
-                )
-
-            # Visor y Descarga de Texto Plano Recortado
-            st.markdown("### 📝 Texto Extraído (Desde 'Indicadores de Producto')")
-            st.caption(
-                "Copia este texto plano directamente o úsalo como insumo para alimentarlo a tu prompt."
+            st.dataframe(
+                df_mga,
+                use_container_width=True,
+                hide_index=True,
             )
 
-            st.text_area(
-                label="Contenido plano recortado:",
-                value=texto_seccion,
-                height=400,
-                key="txt_mga_recortado",
-            )
-
+            csv_mga = df_mga.to_csv(index=False).encode("utf-8")
             st.download_button(
-                label="📥 Descargar Texto Plano (.txt)",
-                data=texto_seccion,
-                file_name="indicadores_producto_mga.txt",
-                mime="text/plain",
+                label="📥 Descargar Tabla MGA en CSV",
+                data=csv_mga,
+                file_name="resumen_mga_productos.csv",
+                mime="text/csv",
             )
-
         else:
             st.warning(
-                "⚠️ No se encontró la frase 'Indicadores de producto' en ninguna página del PDF. "
-                "A continuación se muestra el texto completo escaneado/extraído:"
+                "No se detectó la sección estándar de 'Indicadores de producto' en el PDF subido."
             )
-            pdf_bytes = st.session_state.get("pdf_bytes_mga", b"")
-            if pdf_bytes:
-                with pdfplumber.open(archivo_pdf) as pdf:
-                    texto_completo = "\n".join(
-                        [extraer_texto_pagina(p, idx + 1, pdf_bytes) for idx, p in enumerate(pdf.pages)]
-                    )
 
-                st.text_area(
-                    label="Texto Completo del PDF:",
-                    value=texto_completo,
-                    height=400,
-                )
-
-# TAB 3: PLAN INDICATIVO (DRIVE)
-with tab_pi:
-    st.subheader("📊 Base de Datos: Plan Indicativo (Pestaña 'MP')")
-    st.caption("Carga optimizada de la fuente oficial almacenada en Google Drive.")
-    
-    if st.button("🔄 Cargar / Recargar Plan Indicativo desde Drive"):
-        try:
-            with st.spinner("⏳ Conectando con Google Drive y leyendo pestaña 'MP'..."):
-                df_plan = leer_plan_indicativo_drive(URL_DRIVE_EXCEL)
-                st.session_state["df_plan_indicativo"] = df_plan
-                st.success("✅ ¡Plan Indicativo cargado y almacenado en caché correctamente!")
-        except Exception as e:
-            st.error(f"🚨 Error al conectar o consultar el archivo de Drive: {e}")
-
-    if "df_plan_indicativo" in st.session_state:
-        df_plan = st.session_state["df_plan_indicativo"]
-        st.markdown("#### Vista previa de los datos")
-        st.dataframe(df_plan, use_container_width=True)
-        
+        with st.expander("🔍 Inspeccionar Texto Plano Extraído del PDF"):
+            st.text_area(
+                "Contenido bruto del PDF MGA:",
+                st.session_state.get("texto_pdf_extraido", ""),
+                height=250,
+            )
+            
 # ============================================================
 # COMPONENTE DE AUDITORÍA: WORD VS. PLAN INDICATIVO (PI)
 # ============================================================
