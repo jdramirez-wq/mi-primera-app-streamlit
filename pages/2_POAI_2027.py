@@ -39,7 +39,7 @@ def leer_plan_indicativo_drive(url_excel):
 
 
 # ============================================================
-# FUNCIONES EXTRACTORAS: PARSER MGA DESDE TEXTO/PDF
+# FUNCIONES EXTRACTORAS: PARSER MGA DESDE TEXTO
 # ============================================================
 def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
     """Procesa el texto extraído del reporte MGA DNP y recupera la estructura jerárquica de Indicadores."""
@@ -48,7 +48,6 @@ def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
     else:
         bloque_interes = texto_completo
 
-    # Patrón Regex para capturar Objetivo -> Producto -> Indicador MGA -> Meta Total
     patron_objetivo = re.compile(
         r"(\d{2}\s+Objetivo\s+\d+)\n\s*(\d+\.\s+[^\n]+)\n\s*Producto\n\s*(\d+\.\d+\.\s+[^\n]+)\n\s*Indicador\n\s*(\d+\.\d+\.\d+\s+[^\n]+).*?Meta total:\s*([\d\.,]+)",
         re.DOTALL,
@@ -58,16 +57,16 @@ def extraer_productos_mga_texto(texto_completo: str) -> pd.DataFrame:
     coincidencias = patron_objetivo.findall(bloque_interes)
 
     for match in coincidencias:
-        num_obj_raw, desc_obj, prod_raw, ind_raw, meta_raw in match:
-            codigo_obj = num_obj_raw.strip().replace("Objetivo ", "")
-            obj_completo = f"{codigo_obj} - Objetivo {codigo_obj} {desc_obj.strip()}"
+        num_obj_raw, desc_obj, prod_raw, ind_raw, meta_raw = match
+        codigo_obj = num_obj_raw.strip().replace("Objetivo ", "")
+        obj_completo = f"{codigo_obj} - Objetivo {codigo_obj} {desc_obj.strip()}"
 
-            registros.append({
-                "Objetivo específico": obj_completo,
-                "Producto": prod_raw.strip(),
-                "Indicador MGA": ind_raw.strip(),
-                "Meta total": meta_raw.strip(),
-            })
+        registros.append({
+            "Objetivo específico": obj_completo,
+            "Producto": prod_raw.strip(),
+            "Indicador MGA": ind_raw.strip(),
+            "Meta total": meta_raw.strip(),
+        })
 
     return pd.DataFrame(registros)
 
@@ -153,7 +152,7 @@ def procesar_tablas_estandar(texto_bruto: str):
             continue
         encabezado_tabla = lineas[0].lower()
 
-        # --- TABLA 1: DATOS BÁSICOS Y OBJETIVOS ---
+        # TABLA 1
         if (
             "no.cv" in encabezado_tabla
             and "objetivo general proyecto" in encabezado_tabla
@@ -176,7 +175,7 @@ def procesar_tablas_estandar(texto_bruto: str):
                     dicc_indicadores[idx]["Fecha CV"] = (
                         partes[4] if len(partes) > 4 else ""
                     )
-                    dicc_indicadores[idx]["Objective General Proyecto"] = (
+                    dicc_indicadores[idx]["Objetivo General Proyecto"] = (
                         partes[5] if len(partes) > 5 else ""
                     )
                     dicc_indicadores[idx]["Objetivo Específico"] = (
@@ -190,7 +189,7 @@ def procesar_tablas_estandar(texto_bruto: str):
                     ):
                         nombre_proyecto_tabla = partes[3]
 
-        # --- TABLA 2: ALINEACIÓN PDD ---
+        # TABLA 2
         elif (
             "sector mga-sap" in encabezado_tabla
             and "subprograma plan" in encabezado_tabla
@@ -219,7 +218,7 @@ def procesar_tablas_estandar(texto_bruto: str):
                             partes[6] if len(partes) > 6 else ""
                         )
 
-        # --- TABLA 3: PROGRAMACIÓN PLURIANUAL + CÓDIGO MP ---
+        # TABLA 3
         elif (
             "meta producto plan" in encabezado_tabla
             and "meta total mga" in encabezado_tabla
@@ -281,7 +280,7 @@ def procesar_tablas_estandar(texto_bruto: str):
                             partes[14] if len(partes) > 14 else ""
                         )
 
-        # --- TABLA 4: TIPO DE PRODUCTO MGA ---
+        # TABLA 4
         elif (
             "observación por indicador mga" in encabezado_tabla
             and "producto cv - mga" in encabezado_tabla
@@ -307,7 +306,7 @@ def procesar_tablas_estandar(texto_bruto: str):
                             partes[5] if len(partes) > 5 else ""
                         )
 
-        # --- TABLA 5: POAI 2027 Y TOTALES ---
+        # TABLA 5
         elif (
             "cod. meta de producto" in encabezado_tabla
             or "actividad del proyecto" in encabezado_tabla
@@ -388,7 +387,7 @@ def procesar_tablas_estandar(texto_bruto: str):
 
 
 # ============================================================
-# INTERFAZ DE USUARIOS Y NAVEGACIÓN STREAMLIT
+# INTERFAZ STREAMLIT
 # ============================================================
 st.title("📐 Control Previo y Revisión Técnica de Proyectos")
 st.write(
@@ -398,12 +397,10 @@ st.markdown("---")
 
 tab_cv, tab_mga = st.tabs([
     "📄 Cadena de Valor (DOCX)",
-    "📑 Reporte MGA DNP (Texto / PDF)",
+    "📑 Reporte MGA DNP (Texto)",
 ])
 
-# ------------------------------------------------------------
-# TAB 1: CADENA DE VALOR (PYTHON-DOCX)
-# ------------------------------------------------------------
+# TAB 1
 with tab_cv:
     st.subheader("Carga y Procesamiento de Cadena de Valor (.docx)")
     archivo_word = st.file_uploader(
@@ -444,7 +441,6 @@ with tab_cv:
                 except Exception as e:
                     st.error(f"🚨 Error en el procesamiento del Word: {e}")
 
-    # RENDERIZADO DE MATRICES CARGADAS
     if "df_indicadores_estandar" in st.session_state:
         st.markdown("### 📌 Identificación del Proyecto")
         c1, c2, c3 = st.columns(3)
@@ -486,15 +482,9 @@ with tab_cv:
         else:
             st.warning("No se detectaron actividades presupuestales en la Tabla 5.")
 
-# ------------------------------------------------------------
-# TAB 2: EXTRACCIÓN MGA (PROCESAMIENTO DE TEXTO DE REPORTE)
-# ------------------------------------------------------------
+# TAB 2
 with tab_mga:
     st.subheader("📑 Parseador de Productos e Indicadores MGA")
-    st.write(
-        "Pega directamente el texto copiado de la sección **Programación / Indicadores de Producto** del reporte oficial de la MGA:"
-    )
-
     texto_mga_input = st.text_area(
         "Texto extraído del reporte MGA:", height=200
     )
